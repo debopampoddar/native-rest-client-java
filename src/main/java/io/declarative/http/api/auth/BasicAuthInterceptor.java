@@ -7,9 +7,20 @@ import java.net.http.HttpResponse;
 import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * An {@link ApiInterceptor} that automatically adds a Basic Authentication header to the request.
+ *
+ * @author Debopam
+ */
 public class BasicAuthInterceptor implements ApiInterceptor {
     private final String encodedCredentials;
 
+    /**
+     * Constructs a new {@link BasicAuthInterceptor}.
+     *
+     * @param username the Basic Auth username
+     * @param password the Basic Auth password
+     */
     public BasicAuthInterceptor(String username, String password) {
         String auth = username + ":" + password;
         this.encodedCredentials = Base64.getEncoder().encodeToString(auth.getBytes());

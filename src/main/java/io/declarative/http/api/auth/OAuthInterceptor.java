@@ -6,9 +6,20 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * An {@link ApiInterceptor} that manages OAuth token authentication.
+ * It automatically adds an access token and handles refreshing on a 401 response.
+ *
+ * @author Debopam
+ */
 public class OAuthInterceptor implements ApiInterceptor {
     private final AsyncTokenManager tokenManager; // Your custom token manager
 
+    /**
+     * Constructs a new {@link OAuthInterceptor}.
+     *
+     * @param tokenManager the manager responsible for providing tokens asynchronously
+     */
     public OAuthInterceptor(AsyncTokenManager tokenManager) {
         this.tokenManager = tokenManager;
     }
@@ -43,4 +54,3 @@ public class OAuthInterceptor implements ApiInterceptor {
                 .build();
     }
 }
-
