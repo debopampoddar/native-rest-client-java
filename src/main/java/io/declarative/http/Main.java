@@ -6,7 +6,17 @@ import io.declarative.http.example.UserService;
 
 import java.net.http.HttpClient;
 
+/**
+ * The entry point for the example application demonstrating the usage of {@link NativeApiClient}.
+ *
+ * @author Debopam
+ */
 public class Main {
+    /**
+     * The main method that configures the HTTP client, creates the service, and executes API calls.
+     *
+     * @param args the command line arguments
+     */
     public static void main(String[] args) {
         // 1. Configure the native Java 21 HttpClient (e.g., adding timeouts, HTTP/2)
         HttpClient javaClient = HttpClient.newBuilder()

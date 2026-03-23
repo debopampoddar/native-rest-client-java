@@ -22,20 +22,46 @@ import java.util.concurrent.CompletableFuture;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
+/**
+ * An integration test for {@link NativeApiClient} demonstrating how the API client handles
+ * HTTP requests against a local HTTP server.
+ *
+ * @author Debopam
+ */
 public class NativeApiClientIntegrationTest {
     private static HttpServer server;
     private static String baseUrl;
     private NativeApiClient apiClient;
 
+    /**
+     * An internal service interface defining test endpoints.
+     */
     // 2. Define the Interface exposing both Sync and Async methods
     public interface TestApiService {
+        /**
+         * Simulates retrieving a user.
+         *
+         * @param id the user ID
+         * @return the requested user
+         */
         @GET("/api/users/{id}")
         User getUser(@Path("id") int id);
 
+        /**
+         * Simulates creating a user.
+         *
+         * @param user the new user
+         * @return the created user
+         */
         @POST("/api/users")
         User user(@Body User user);
     }
 
+    /**
+     * Configures and starts a local HTTP server to mock API responses.
+     *
+     * @throws IOException if the server fails to start
+     */
     // 3. Setup the Local HTTP Server before all tests
     @BeforeAll
     static void startServer() throws IOException {
@@ -68,11 +94,17 @@ public class NativeApiClientIntegrationTest {
         baseUrl = "http://localhost:" + server.getAddress().getPort();
     }
 
+    /**
+     * Stops the local HTTP server after all tests have run.
+     */
     @AfterAll
     static void stopServer() {
         server.stop(0);
     }
 
+    /**
+     * Initializes a new instance of {@link NativeApiClient} configured to point at the local server.
+     */
     // 4. Setup the Client before each test
     @BeforeEach
     void setUp() {
@@ -81,6 +113,9 @@ public class NativeApiClientIntegrationTest {
                 .build();
     }
 
+    /**
+     * Validates that the client successfully sends a GET request and deserializes the response.
+     */
     @Test
     @DisplayName("Test SYNCHRONOUS GET request and deserialize JSON")
     void testSynchronousGet() {
@@ -94,6 +129,9 @@ public class NativeApiClientIntegrationTest {
         assertEquals("Alice", user.name());
     }
 
+    /**
+     * Validates that the client successfully sends a POST request and deserializes the response.
+     */
     @Test
     @DisplayName("Test SYNCHRONOUS POST request and deserialize JSON")
     void testGetJsonArray() {

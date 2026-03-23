@@ -16,6 +16,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.function.Supplier;
 
+/**
+ * A declarative REST client based on Java's native {@link HttpClient}.
+ * It creates implementations of interfaces dynamically using dynamic proxies,
+ * similar to Retrofit or Feign.
+ *
+ * @author Debopam
+ */
 public class NativeApiClient {
 
     private final HttpClient httpClient;
@@ -30,6 +37,13 @@ public class NativeApiClient {
         this.tokenSupplier = builder.tokenSupplier;
     }
 
+    /**
+     * Creates an implementation of the API endpoints defined by the given interface.
+     *
+     * @param service the interface class defining the API
+     * @param <T>     the type of the interface
+     * @return a proxy object implementing the service interface
+     */
     @SuppressWarnings("unchecked")
     public <T> T createService(Class<T> service) {
         return (T) Proxy.newProxyInstance(
@@ -39,6 +53,10 @@ public class NativeApiClient {
         );
     }
 
+    /**
+     * An invocation handler that intercepts method calls on the proxy and converts them
+     * into HTTP requests using the configured native HttpClient.
+     */
     private class ApiInvocationHandler implements InvocationHandler {
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
@@ -94,28 +112,55 @@ public class NativeApiClient {
         }
     }
 
-    // Builder Pattern to mimic Retrofit.Builder()
+    /**
+     * Builder for {@link NativeApiClient}.
+     * Mimics the Retrofit Builder pattern to configure the client.
+     */
     public static class Builder {
         private HttpClient httpClient = HttpClient.newHttpClient();
         private String baseUrl;
         private ObjectMapper objectMapper = new ObjectMapper();
         private Supplier<String> tokenSupplier;
 
+        /**
+         * Sets the base URL for the API.
+         *
+         * @param baseUrl the base URL
+         * @return this builder instance
+         */
         public Builder baseUrl(String baseUrl) {
             this.baseUrl = baseUrl;
             return this;
         }
 
+        /**
+         * Sets the {@link HttpClient} to be used by the API client.
+         *
+         * @param client the HTTP client
+         * @return this builder instance
+         */
         public Builder client(HttpClient client) {
             this.httpClient = client;
             return this;
         }
 
+        /**
+         * Sets a supplier for providing Bearer tokens for authentication.
+         *
+         * @param tokenSupplier a supplier providing the authentication token
+         * @return this builder instance
+         */
         public Builder bearerAuth(Supplier<String> tokenSupplier) {
             this.tokenSupplier = tokenSupplier;
             return this;
         }
 
+        /**
+         * Builds and returns a new {@link NativeApiClient}.
+         *
+         * @return the constructed NativeApiClient
+         * @throws IllegalStateException if a base URL has not been provided
+         */
         public NativeApiClient build() {
             if (baseUrl == null) throw new IllegalStateException("Base URL required");
             return new NativeApiClient(this);
