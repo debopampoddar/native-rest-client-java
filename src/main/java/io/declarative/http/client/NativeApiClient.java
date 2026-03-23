@@ -5,6 +5,7 @@ import io.declarative.http.api.Body;
 import io.declarative.http.api.GET;
 import io.declarative.http.api.POST;
 import io.declarative.http.api.Path;
+import io.declarative.http.api.Query;
 import io.declarative.http.api.interceptors.Interceptor;
 
 import java.lang.reflect.InvocationHandler;
@@ -14,9 +15,11 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.Type;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -69,6 +72,7 @@ public class NativeApiClient {
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder();
             String endpoint = "";
             String httpMethod = "GET";
+            StringBuilder queryBuilder = new StringBuilder();
             HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.noBody();
 
             // Process Method Annotations (GET, POST)
@@ -77,54 +81,72 @@ public class NativeApiClient {
             } else if (method.isAnnotationPresent(POST.class)) {
                 httpMethod = "POST";
                 endpoint = method.getAnnotation(POST.class).value();
+            } else {
+                throw new UnsupportedOperationException("Method " + method.getName() + " is missing HTTP method annotation (GET/POST)");
             }
 
-            // Process Parameters (@Path, @Body)
-            Parameter[] parameters = method.getParameters();
-            for (int i = 0; i < parameters.length; i++) {
-                if (parameters[i].isAnnotationPresent(Path.class)) {
-                    String pathName = parameters[i].getAnnotation(Path.class).value();
-                    endpoint = endpoint.replace("{" + pathName + "}", args[i].toString());
-                } else if (parameters[i].isAnnotationPresent(Body.class)) {
-                    String jsonBody = objectMapper.writeValueAsString(args[i]);
-                    bodyPublisher = HttpRequest.BodyPublishers.ofString(jsonBody);
-                    requestBuilder.header("Content-Type", "application/json");
+            // Process Parameters (@Path, @Body, @Query)
+            if (args != null) {
+                Parameter[] parameters = method.getParameters();
+                for (int i = 0; i < parameters.length; i++) {
+                    if (parameters[i].isAnnotationPresent(Path.class)) {
+                        String pathName = parameters[i].getAnnotation(Path.class).value();
+                        endpoint = endpoint.replace("{" + pathName + "}", args[i].toString());
+                    } else if (parameters[i].isAnnotationPresent(Query.class)) {
+                        String queryName = parameters[i].getAnnotation(Query.class).value();
+                        String queryValue = URLEncoder.encode(args[i].toString(), StandardCharsets.UTF_8);
+                        char separator = (endpoint.contains("?") || queryBuilder.length() > 0) ? '&' : '?';
+                        queryBuilder.append(separator).append(queryName).append("=").append(queryValue);
+                    } else if (parameters[i].isAnnotationPresent(Body.class)) {
+                        String jsonBody = objectMapper.writeValueAsString(args[i]);
+                        bodyPublisher = HttpRequest.BodyPublishers.ofString(jsonBody);
+                    }
                 }
             }
 
+            String fullUri = baseUrl + endpoint + queryBuilder.toString();
             // Build and Execute Request
             HttpRequest request = requestBuilder
-                    .uri(URI.create(baseUrl + endpoint))
+                    .uri(URI.create(fullUri))
                     .method(httpMethod, bodyPublisher)
                     .header("Content-Type", "application/json")
                     .build();
 
             // Pass through the interceptor chain
-            RealInterceptorChain chain = new RealInterceptorChain(interceptors, 0, request, httpClient);
+            Interceptor.Chain chain = new HttpInterceptorChain(interceptors, 0, request, httpClient);
             CompletableFuture<HttpResponse<String>> responseFuture = chain.proceed(request);
 
             // Determine Return Type
-            boolean returnsFuture = method.getReturnType().equals(CompletableFuture.class);
-            Class<?> targetClass;
+            boolean returnsFuture = CompletableFuture.class.isAssignableFrom(method.getReturnType());
+            Type targetType;
 
             if (returnsFuture) {
                 // Extract 'T' from CompletableFuture<T>
                 Type genericReturnType = method.getGenericReturnType();
-                if (genericReturnType instanceof ParameterizedType) {
-                    targetClass = (Class<?>) ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+                if (genericReturnType instanceof ParameterizedType parameterizedType) {
+                    targetType = parameterizedType.getActualTypeArguments()[0];
                 } else {
-                    targetClass = String.class;
+                    targetType = Object.class;
                 }
             } else {
-                targetClass = method.getReturnType();
+                targetType = method.getGenericReturnType();
             }
 
             // Map the response body to the target Object
             CompletableFuture<Object> resultFuture = responseFuture.thenApply(response -> {
+                if (targetType instanceof Class<?> clazz && clazz.equals(HttpResponse.class)) {
+                    return response;
+                }
+
                 if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                    if (targetClass.equals(String.class)) return response.body();
+                    if (targetType.equals(void.class) || targetType.equals(Void.class)) {
+                        return null;
+                    }
+                    if (targetType.equals(String.class)) {
+                        return response.body();
+                    }
                     try {
-                        return objectMapper.readValue(response.body(), targetClass);
+                        return objectMapper.readValue(response.body(), objectMapper.constructType(targetType));
                     } catch (Exception e) {
                         throw new CompletionException("Deserialization failed", e);
                     }
@@ -134,17 +156,25 @@ public class NativeApiClient {
             });
 
             // Return Async or block for Sync
-            return returnsFuture ? resultFuture : resultFuture.join();
+            if (returnsFuture) {
+                return resultFuture;
+            } else {
+                try {
+                    return resultFuture.join();
+                } catch (CompletionException e) {
+                    throw e.getCause() != null ? e.getCause() : e;
+                }
+            }
         }
     }
 
-    private static class RealInterceptorChain implements Interceptor.Chain {
+    private static class HttpInterceptorChain implements Interceptor.Chain {
         private final List<Interceptor> interceptors;
         private final int index;
         private final HttpRequest request;
         private final HttpClient httpClient;
 
-        RealInterceptorChain(List<Interceptor> interceptors, int index, HttpRequest request, HttpClient httpClient) {
+        HttpInterceptorChain(List<Interceptor> interceptors, int index, HttpRequest request, HttpClient httpClient) {
             this.interceptors = interceptors;
             this.index = index;
             this.request = request;
@@ -152,15 +182,17 @@ public class NativeApiClient {
         }
 
         @Override
-        public HttpRequest request() { return request; }
+        public HttpRequest request() {
+            return request;
+        }
 
         @Override
         public CompletableFuture<HttpResponse<String>> proceed(HttpRequest request) {
             if (index < interceptors.size()) {
-                Interceptor.Chain nextChain = new RealInterceptorChain(interceptors, index + 1, request, httpClient);
+                // Pass the potentially modified request to the next chain link
+                HttpInterceptorChain nextChain = new HttpInterceptorChain(interceptors, index + 1, request, httpClient);
                 return interceptors.get(index).intercept(nextChain);
             } else {
-                // End of chain: Do the actual network IO
                 return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString());
             }
         }
@@ -198,7 +230,8 @@ public class NativeApiClient {
         }
 
         public Builder addInterceptor(Interceptor interceptor) {
-            this.interceptors.add(interceptor); return this;
+            this.interceptors.add(interceptor);
+            return this;
         }
 
         /**

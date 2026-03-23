@@ -1,15 +1,15 @@
 package io.declarative.http.client;
 
-
 import com.sun.net.httpserver.HttpServer;
 import io.declarative.http.api.Body;
 import io.declarative.http.api.GET;
 import io.declarative.http.api.POST;
-import io.declarative.http.api.Path;
-import io.declarative.http.api.interceptors.Interceptor;
+import io.declarative.http.api.Query;
+import io.declarative.http.api.auth.AsyncTokenManager;
+import io.declarative.http.api.auth.BasicAuthInterceptor;
+import io.declarative.http.api.auth.OAuthAsyncInterceptor;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -20,68 +20,68 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * An integration test for {@link NativeApiClient} demonstrating how the API client handles
- * HTTP requests against a local HTTP server.
- *
- * @author Debopam
- */
 class NativeApiClientIntegrationTest {
 
     private static HttpServer server;
     private static String baseUrl;
-    private NativeApiClient apiClient;
 
-    public record TestUser (int id,
-                            String name){
+    public record TestData(String message) {
     }
 
-    public interface TestApiService {
-        @GET("/api/users/{id}")
-        TestUser getUserSync(@Path("id") int id);
+    // --- API Interface ---
+    public interface IntegrationService {
+        @GET("/api/public")
+        TestData getPublicData(@Query("search") String searchTerm);
 
-        @POST("/api/users")
-        CompletableFuture<TestUser> createUserAsync(@Body TestUser user);
+        @GET("/api/public/error")
+        TestData getPublicError();
+
+        @GET("/api/basic")
+        TestData getBasicSecuredData();
+
+        @POST("/api/oauth")
+        CompletableFuture<TestData> postOAuthDataAsync(@Body TestData data);
     }
 
-    // Setup the Local HTTP Server before all tests
+    // --- Local Server Mock Setup ---
     @BeforeAll
     static void startServer() throws IOException {
-        // Bind to port 0 to let the OS pick a free port automatically
         server = HttpServer.create(new InetSocketAddress(0), 0);
 
-        // Mock GET Endpoint
-        server.createContext("/api/users/1", exchange -> {
-            String response = "{\"id\":1, \"name\":\"Alice\"}";
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, response.length());
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(response.getBytes(StandardCharsets.UTF_8));
+        // 1. No Auth Endpoint (Happy & Error)
+        server.createContext("/api/public", exchange -> {
+            String query = exchange.getRequestURI().getQuery();
+            if (exchange.getRequestURI().getPath().endsWith("/error")) {
+                sendResponse(exchange, 500, "{\"error\": \"Internal Server Error\"}");
+            } else {
+                sendResponse(exchange, 200, "{\"message\": \"Search result for: " + query + "\"}");
             }
         });
 
-        // Mock POST Endpoint
-        server.createContext("/api/users", exchange -> {
-            // Verify custom interceptor header exists
-            String customHeader = exchange.getRequestHeaders().getFirst("X-Test-Header");
-            if (!"IntegrationTest".equals(customHeader)) {
-                exchange.sendResponseHeaders(400, 0);
-                exchange.close();
-                return;
-            }
-
-            // Echo back a successful creation response
-            String response = "{\"id\":99, \"name\":\"Bob\"}";
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(201, response.length());
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(response.getBytes(StandardCharsets.UTF_8));
+        // 2. Basic Auth Endpoint
+        server.createContext("/api/basic", exchange -> {
+            String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+            if ("Basic YWRtaW46cGFzc3dvcmQxMjM=".equals(authHeader)) { // "admin:password123" Base64'd
+                sendResponse(exchange, 200, "{\"message\": \"Basic Auth Success\"}");
+            } else {
+                sendResponse(exchange, 401, "{\"error\": \"Unauthorized Basic\"}");
             }
         });
 
-        server.setExecutor(null); // creates a default executor
+        // 3. OAuth Endpoint (Simulating token expiration)
+        server.createContext("/api/oauth", exchange -> {
+            String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+            if ("Bearer fresh_token_999".equals(authHeader)) {
+                sendResponse(exchange, 201, "{\"message\": \"OAuth Success\"}");
+            } else {
+                sendResponse(exchange, 401, "{\"error\": \"Token Expired\"}");
+            }
+        });
+
+        server.setExecutor(null);
         server.start();
         baseUrl = "http://localhost:" + server.getAddress().getPort();
     }
@@ -91,50 +91,91 @@ class NativeApiClientIntegrationTest {
         server.stop(0);
     }
 
-    // Setup the Client before each test
-    @BeforeEach
-    void setUp() {
-        // We add a simple interceptor to prove the chain works and modifies requests
-        Interceptor headerInterceptor = chain -> {
-            var modifiedRequest = java.net.http.HttpRequest.newBuilder(chain.request(), (k, v) -> true)
-                    .header("X-Test-Header", "IntegrationTest")
-                    .build();
-            return chain.proceed(modifiedRequest);
+    private static void sendResponse(com.sun.net.httpserver.HttpExchange exchange, int code, String body) throws IOException {
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(code, body.length());
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(body.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    @Test
+    @DisplayName("NoAuth: Happy Path with @Query Parameter")
+    void testNoAuth_HappyPath() {
+        IntegrationService api = new NativeApiClient.Builder().baseUrl(baseUrl).build().createService(IntegrationService.class);
+
+        TestData response = api.getPublicData("java21");
+
+        assertEquals("Search result for: search=java21", response.message);
+    }
+
+    @Test
+    @DisplayName("NoAuth: Error Path (500 Server Error)")
+    void testNoAuth_ErrorPath() {
+        IntegrationService api = new NativeApiClient.Builder()
+                .baseUrl(baseUrl)
+                .build()
+                .createService(IntegrationService.class);
+
+        RuntimeException exception = assertThrows(RuntimeException.class, api::getPublicError);
+        assertTrue(exception.getMessage().contains("API Call failed: 500"), exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("BasicAuth: Happy Path with Correct Credentials")
+    void testBasicAuth_HappyPath() {
+        NativeApiClient client = new NativeApiClient.Builder()
+                .baseUrl(baseUrl)
+                .addInterceptor(new BasicAuthInterceptor("admin", "password123"))
+                .build();
+        IntegrationService api = client.createService(IntegrationService.class);
+
+        TestData response = api.getBasicSecuredData();
+        assertEquals("Basic Auth Success", response.message);
+    }
+
+    @Test
+    @DisplayName("BasicAuth: Error Path with Wrong Credentials")
+    void testBasicAuth_ErrorPath() {
+        NativeApiClient client = new NativeApiClient.Builder()
+                .baseUrl(baseUrl)
+                .addInterceptor(new BasicAuthInterceptor("wrongUser", "wrongPass"))
+                .build();
+        IntegrationService api = client.createService(IntegrationService.class);
+
+        RuntimeException exception = assertThrows(RuntimeException.class, api::getBasicSecuredData);
+        assertTrue(exception.getMessage().contains("API Call failed: 401"), exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("OAuth: Happy Path with Auto-Refresh on 401")
+    void testOAuth_HappyPath_WithRefresh() throws Exception {
+        // Mock token manager starts with expired token
+        AsyncTokenManager tokenManager = new AsyncTokenManager() {
+            private String currentToken = "expired_token";
+
+            @Override
+            public CompletableFuture<String> getAccessToken() {
+                return CompletableFuture.completedFuture(currentToken);
+            }
+
+            @Override
+            public CompletableFuture<String> refreshAccessToken() {
+                // Simulate network refresh
+                this.currentToken = "fresh_token_999";
+                return CompletableFuture.completedFuture(currentToken);
+            }
         };
 
-        apiClient = new NativeApiClient.Builder()
+        NativeApiClient client = new NativeApiClient.Builder()
                 .baseUrl(baseUrl)
-                .addInterceptor(headerInterceptor)
+                .addInterceptor(new OAuthAsyncInterceptor(tokenManager))
                 .build();
-    }
+        IntegrationService api = client.createService(IntegrationService.class);
 
-    @Test
-    @DisplayName("Should execute SYNCHRONOUS GET request and deserialize JSON")
-    void testSynchronousGet() {
-        TestApiService service = apiClient.createService(TestApiService.class);
+        // This will send 'expired', get 401, auto-refresh to 'fresh_token_999', retry, and get 201
+        CompletableFuture<TestData> futureResponse = api.postOAuthDataAsync(new TestData("Payload"));
 
-        // This call will block until the server responds
-        TestUser user = service.getUserSync(1);
-
-        assertNotNull(user);
-        assertEquals(1, user.id);
-        assertEquals("Alice", user.name);
-    }
-
-    @Test
-    @DisplayName("Should execute ASYNCHRONOUS POST request and pass interceptor headers")
-    void testAsynchronousPost() throws Exception {
-        TestApiService service = apiClient.createService(TestApiService.class);
-        TestUser newUser = new TestUser(0, "Bob");
-
-        // This call returns instantly
-        CompletableFuture<TestUser> futureUser = service.createUserAsync(newUser);
-
-        // Wait for the future to complete (only needed because this is a JUnit test)
-        TestUser createdUser = futureUser.get();
-
-        assertNotNull(createdUser);
-        assertEquals(99, createdUser.id);
-        assertEquals("Bob", createdUser.name);
+        assertEquals("OAuth Success", futureResponse.get().message);
     }
 }
