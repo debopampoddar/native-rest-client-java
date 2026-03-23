@@ -5,8 +5,7 @@ import io.declarative.http.api.Body;
 import io.declarative.http.api.GET;
 import io.declarative.http.api.POST;
 import io.declarative.http.api.Path;
-import io.declarative.http.api.auth.ApiInterceptor;
-import io.declarative.http.api.interceptors.RequestExecutor;
+import io.declarative.http.api.interceptors.Interceptor;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -18,6 +17,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
@@ -33,13 +34,13 @@ public class NativeApiClient {
     private final HttpClient httpClient;
     private final String baseUrl;
     private final ObjectMapper objectMapper;
-    private final ApiInterceptor interceptor;
+    private final List<Interceptor> interceptors;
 
     private NativeApiClient(Builder builder) {
         this.httpClient = builder.httpClient;
         this.baseUrl = builder.baseUrl;
         this.objectMapper = builder.objectMapper;
-        this.interceptor = builder.interceptor;
+        this.interceptors = List.copyOf(builder.interceptors);
     }
 
     /**
@@ -98,13 +99,9 @@ public class NativeApiClient {
                     .header("Content-Type", "application/json")
                     .build();
 
-            // Setup the base executor to actually fire the HttpClient
-            RequestExecutor baseExecutor = req ->
-                    httpClient.sendAsync(req, HttpResponse.BodyHandlers.ofString());
-
             // Pass through the interceptor chain
-            CompletableFuture<HttpResponse<String>> responseFuture =
-                    interceptor.intercept(request, baseExecutor);
+            RealInterceptorChain chain = new RealInterceptorChain(interceptors, 0, request, httpClient);
+            CompletableFuture<HttpResponse<String>> responseFuture = chain.proceed(request);
 
             // Determine Return Type
             boolean returnsFuture = method.getReturnType().equals(CompletableFuture.class);
@@ -136,8 +133,36 @@ public class NativeApiClient {
                 }
             });
 
-            // 6. Return Async or block for Sync
+            // Return Async or block for Sync
             return returnsFuture ? resultFuture : resultFuture.join();
+        }
+    }
+
+    private static class RealInterceptorChain implements Interceptor.Chain {
+        private final List<Interceptor> interceptors;
+        private final int index;
+        private final HttpRequest request;
+        private final HttpClient httpClient;
+
+        RealInterceptorChain(List<Interceptor> interceptors, int index, HttpRequest request, HttpClient httpClient) {
+            this.interceptors = interceptors;
+            this.index = index;
+            this.request = request;
+            this.httpClient = httpClient;
+        }
+
+        @Override
+        public HttpRequest request() { return request; }
+
+        @Override
+        public CompletableFuture<HttpResponse<String>> proceed(HttpRequest request) {
+            if (index < interceptors.size()) {
+                Interceptor.Chain nextChain = new RealInterceptorChain(interceptors, index + 1, request, httpClient);
+                return interceptors.get(index).intercept(nextChain);
+            } else {
+                // End of chain: Do the actual network IO
+                return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+            }
         }
     }
 
@@ -149,7 +174,7 @@ public class NativeApiClient {
         private HttpClient httpClient = HttpClient.newHttpClient();
         private String baseUrl;
         private ObjectMapper objectMapper = new ObjectMapper();
-        private ApiInterceptor interceptor = (req, chain) -> chain.execute(req);
+        private final List<Interceptor> interceptors = new ArrayList<>();
         /**
          * Sets the base URL for the API.
          *
@@ -172,8 +197,8 @@ public class NativeApiClient {
             return this;
         }
 
-        public Builder interceptor(ApiInterceptor interceptor) {
-            this.interceptor = interceptor; return this;
+        public Builder addInterceptor(Interceptor interceptor) {
+            this.interceptors.add(interceptor); return this;
         }
 
         /**

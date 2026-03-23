@@ -1,6 +1,6 @@
 package io.declarative.http.api.auth;
 
-import io.declarative.http.api.interceptors.RequestExecutor;
+import io.declarative.http.api.interceptors.Interceptor;
 
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -12,7 +12,7 @@ import java.util.concurrent.CompletableFuture;
  *
  * @author Debopam
  */
-public class BasicAuthInterceptor implements ApiInterceptor {
+public class BasicAuthInterceptor implements Interceptor {
     private final String encodedCredentials;
 
     /**
@@ -27,12 +27,12 @@ public class BasicAuthInterceptor implements ApiInterceptor {
     }
 
     @Override
-    public CompletableFuture<HttpResponse<String>> intercept(HttpRequest request, RequestExecutor chain) {
+    public CompletableFuture<HttpResponse<String>> intercept(Chain chain) {
+        HttpRequest originalRequest = chain.request();
         // Java 16+ allows copying an existing request easily
-        HttpRequest authenticatedRequest = HttpRequest.newBuilder(request, (k, v) -> true)
+        HttpRequest authenticatedRequest = HttpRequest.newBuilder(originalRequest, (k, v) -> true)
                 .setHeader("Authorization", "Basic " + encodedCredentials)
                 .build();
-
-        return chain.execute(authenticatedRequest);
+        return chain.proceed(authenticatedRequest);
     }
 }

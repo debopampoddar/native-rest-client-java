@@ -1,11 +1,13 @@
 package io.declarative.http;
 
-import io.declarative.http.api.auth.ApiInterceptor;
-import io.declarative.http.api.auth.BasicAuthInterceptor;
+import io.declarative.http.api.auth.AsyncTokenManager;
+import io.declarative.http.api.auth.OAuthAsyncInterceptor;
+import io.declarative.http.api.interceptors.LoggingInterceptor;
 import io.declarative.http.client.NativeApiClient;
 import io.declarative.http.example.UserService;
 
 import java.net.http.HttpClient;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * The entry point for the example application demonstrating the usage of {@link NativeApiClient}.
@@ -19,12 +21,18 @@ public class Main {
      * @param args the command line arguments
      */
     public static void main(String[] args) {
-        // Use Basic Auth:
-        ApiInterceptor basicAuth = new BasicAuthInterceptor("admin", "password123");
-
-        // OR Use OAuth:
-        // ApiInterceptor oauth = new OAuthInterceptor(new MyAsyncTokenManager());
-
+        // Dummy Token Manager for the example
+        AsyncTokenManager myTokenManager = new AsyncTokenManager() {
+            @Override
+            public CompletableFuture<String> getAccessToken() {
+                return CompletableFuture.completedFuture("expired_token");
+            }
+            @Override
+            public CompletableFuture<String> refreshAccessToken() {
+                // Simulate network delay for refresh
+                return CompletableFuture.supplyAsync(() -> "new_valid_token_123");
+            }
+        };
         // 1. Configure the native Java 21 HttpClient (e.g., adding timeouts, HTTP/2)
         HttpClient javaClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_2)
@@ -34,7 +42,8 @@ public class Main {
         NativeApiClient apiClient = new NativeApiClient.Builder()
                 .baseUrl("https://api.example.com")
                 .client(javaClient)
-                .interceptor(basicAuth)
+                .addInterceptor(new LoggingInterceptor())         // Log first
+                .addInterceptor(new OAuthAsyncInterceptor(myTokenManager)) // Auth second
                 .build();
 
         // 3. Create the service
