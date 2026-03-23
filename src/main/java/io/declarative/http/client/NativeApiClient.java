@@ -1,12 +1,16 @@
 package io.declarative.http.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.declarative.http.api.Body;
-import io.declarative.http.api.GET;
-import io.declarative.http.api.POST;
-import io.declarative.http.api.Path;
-import io.declarative.http.api.Query;
+import io.declarative.http.api.annotation.Body;
+import io.declarative.http.api.annotation.DELETE;
+import io.declarative.http.api.annotation.GET;
+import io.declarative.http.api.annotation.POST;
+import io.declarative.http.api.annotation.PUT;
+import io.declarative.http.api.annotation.Path;
+import io.declarative.http.api.annotation.Query;
 import io.declarative.http.api.interceptors.Interceptor;
+import io.declarative.http.error.ApiErrorPayload;
+import io.declarative.http.error.ApiException;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -81,8 +85,14 @@ public class NativeApiClient {
             } else if (method.isAnnotationPresent(POST.class)) {
                 httpMethod = "POST";
                 endpoint = method.getAnnotation(POST.class).value();
+            } else if (method.isAnnotationPresent(PUT.class)) {
+                endpoint = method.getAnnotation(PUT.class).value();
+                httpMethod = "PUT";
+            } else if (method.isAnnotationPresent(DELETE.class)) {
+                endpoint = method.getAnnotation(DELETE.class).value();
+                httpMethod = "DELETE";
             } else {
-                throw new UnsupportedOperationException("Method " + method.getName() + " is missing HTTP method annotation (GET/POST)");
+                throw new UnsupportedOperationException("HTTP Method annotation missing on " + method.getName());
             }
 
             // Process Parameters (@Path, @Body, @Query)
@@ -134,6 +144,7 @@ public class NativeApiClient {
 
             // Map the response body to the target Object
             CompletableFuture<Object> resultFuture = responseFuture.thenApply(response -> {
+                int status = response.statusCode();
                 if (targetType instanceof Class<?> clazz && clazz.equals(HttpResponse.class)) {
                     return response;
                 }
@@ -151,7 +162,18 @@ public class NativeApiClient {
                         throw new CompletionException("Deserialization failed", e);
                     }
                 } else {
-                    throw new RuntimeException("API Call failed: " + response.statusCode());
+                    // --- ERROR PATH ---
+                    ApiErrorPayload errorPayload = null;
+                    try {
+                        // Attempt to parse the JSON error payload
+                        errorPayload = objectMapper.readValue(response.body(), ApiErrorPayload.class);
+                    } catch (Exception e) {
+                        // Ignore parsing errors (e.g., if the server returns raw HTML for a 500 error)
+                    }
+
+                    // Throw our custom exception. We wrap it in CompletionException because
+                    // Java requires it when throwing checked/custom exceptions inside thenApply.
+                    throw new CompletionException(new ApiException(status, errorPayload, response.body()));
                 }
             });
 
@@ -162,7 +184,11 @@ public class NativeApiClient {
                 try {
                     return resultFuture.join();
                 } catch (CompletionException e) {
-                    throw e.getCause() != null ? e.getCause() : e;
+                    // Unwrap our custom exception so the user can use standard try/catch
+                    if (e.getCause() instanceof ApiException) {
+                        throw (ApiException) e.getCause();
+                    }
+                    throw e; // Rethrow generic failures
                 }
             }
         }
@@ -229,6 +255,12 @@ public class NativeApiClient {
             return this;
         }
 
+        /**
+         * Adds an {@link Interceptor} to the request execution chain.
+         *
+         * @param interceptor the interceptor to add
+         * @return this builder instance
+         */
         public Builder addInterceptor(Interceptor interceptor) {
             this.interceptors.add(interceptor);
             return this;

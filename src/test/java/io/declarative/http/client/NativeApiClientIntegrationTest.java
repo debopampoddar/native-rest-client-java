@@ -1,10 +1,13 @@
 package io.declarative.http.client;
 
 import com.sun.net.httpserver.HttpServer;
-import io.declarative.http.api.Body;
-import io.declarative.http.api.GET;
-import io.declarative.http.api.POST;
-import io.declarative.http.api.Query;
+import io.declarative.http.api.annotation.Body;
+import io.declarative.http.api.annotation.DELETE;
+import io.declarative.http.api.annotation.GET;
+import io.declarative.http.api.annotation.POST;
+import io.declarative.http.api.annotation.PUT;
+import io.declarative.http.api.annotation.Path;
+import io.declarative.http.api.annotation.Query;
 import io.declarative.http.api.auth.AsyncTokenManager;
 import io.declarative.http.api.auth.BasicAuthInterceptor;
 import io.declarative.http.api.auth.OAuthAsyncInterceptor;
@@ -44,6 +47,12 @@ class NativeApiClientIntegrationTest {
 
         @POST("/api/oauth")
         CompletableFuture<TestData> postOAuthDataAsync(@Body TestData data);
+
+        @PUT("/api/data/{id}")
+        TestData updateData(@Path("id") int id, @Body TestData data);
+
+        @DELETE("/api/data/{id}")
+        String deleteData(@Path("id") int id);
     }
 
     // --- Local Server Mock Setup ---
@@ -78,6 +87,22 @@ class NativeApiClientIntegrationTest {
                 sendResponse(exchange, 201, "{\"message\": \"OAuth Success\"}");
             } else {
                 sendResponse(exchange, 401, "{\"error\": \"Token Expired\"}");
+            }
+        });
+
+        server.createContext("/api/data/", exchange -> {
+            String method = exchange.getRequestMethod();
+            String path = exchange.getRequestURI().getPath();
+
+            // Extract the ID from the path (e.g., /api/data/42 -> 42)
+            String id = path.substring(path.lastIndexOf('/') + 1);
+
+            if ("PUT".equalsIgnoreCase(method)) {
+                sendResponse(exchange, 200, "{\"message\": \"Updated item " + id + "\"}");
+            } else if ("DELETE".equalsIgnoreCase(method)) {
+                sendResponse(exchange, 204, ""); // 204 No Content is standard for DELETE
+            } else {
+                sendResponse(exchange, 405, "{\"message\": \"Method Not Allowed\"}");
             }
         });
 
@@ -118,7 +143,7 @@ class NativeApiClientIntegrationTest {
                 .createService(IntegrationService.class);
 
         RuntimeException exception = assertThrows(RuntimeException.class, api::getPublicError);
-        assertTrue(exception.getMessage().contains("API Call failed: 500"), exception.getMessage());
+        assertTrue(exception.getMessage().contains("HTTP 500"), exception.getMessage());
     }
 
     @Test
@@ -144,7 +169,7 @@ class NativeApiClientIntegrationTest {
         IntegrationService api = client.createService(IntegrationService.class);
 
         RuntimeException exception = assertThrows(RuntimeException.class, api::getBasicSecuredData);
-        assertTrue(exception.getMessage().contains("API Call failed: 401"), exception.getMessage());
+        assertTrue(exception.getMessage().contains("HTTP 401"), exception.getMessage());
     }
 
     @Test
@@ -177,5 +202,27 @@ class NativeApiClientIntegrationTest {
         CompletableFuture<TestData> futureResponse = api.postOAuthDataAsync(new TestData("Payload"));
 
         assertEquals("OAuth Success", futureResponse.get().message);
+    }
+
+    @Test
+    @DisplayName("PUT: Happy Path mapping @Path and @Body")
+    void testPut_HappyPath() {
+        IntegrationService api = new NativeApiClient.Builder().baseUrl(baseUrl).build().createService(IntegrationService.class);
+
+        TestData updatePayload = new TestData("Updated Data");
+        TestData response = api.updateData(42, updatePayload);
+
+        assertEquals("Updated item 42", response.message);
+    }
+
+    @Test
+    @DisplayName("DELETE: Happy Path mapping @Path and returning raw String")
+    void testDelete_HappyPath() {
+        IntegrationService api = new NativeApiClient.Builder().baseUrl(baseUrl).build().createService(IntegrationService.class);
+
+        // The server returns a 204 No Content with an empty body, which our client parses into an empty String.
+        String response = api.deleteData(99);
+
+        assertTrue(response.isEmpty(), "DELETE response should be empty for 204 No Content");
     }
 }

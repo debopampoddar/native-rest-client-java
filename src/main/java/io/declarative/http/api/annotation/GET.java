@@ -1,4 +1,4 @@
-package io.declarative.http.api;
+package io.declarative.http.api.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
