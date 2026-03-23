@@ -5,6 +5,8 @@ import io.declarative.http.api.GET;
 import io.declarative.http.api.POST;
 import io.declarative.http.api.Path;
 
+import java.util.concurrent.CompletableFuture;
+
 /**
  * An example interface defining the HTTP API endpoints for a user service.
  *
@@ -17,8 +19,9 @@ public interface UserService {
      * @param id the unique identifier of the user to retrieve
      * @return the requested user
      */
+    // Asynchronous call
     @GET("/users/{id}")
-    User getUserById(@Path("id") int id);
+    CompletableFuture<User> getUserById(@Path("id") int id);
 
     /**
      * Creates a new user via an HTTP POST request.

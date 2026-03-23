@@ -1,7 +1,6 @@
 package io.declarative.http.client;
 
 import com.sun.net.httpserver.HttpServer;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.declarative.http.api.Body;
 import io.declarative.http.api.GET;
 import io.declarative.http.api.POST;
@@ -36,7 +35,7 @@ public class NativeApiClientIntegrationTest {
     /**
      * An internal service interface defining test endpoints.
      */
-    // 2. Define the Interface exposing both Sync and Async methods
+    // Define the Interface exposing both Sync and Async methods
     public interface TestApiService {
         /**
          * Simulates retrieving a user.
@@ -45,7 +44,7 @@ public class NativeApiClientIntegrationTest {
          * @return the requested user
          */
         @GET("/api/users/{id}")
-        User getUser(@Path("id") int id);
+        CompletableFuture<User> getUser(@Path("id") int id);
 
         /**
          * Simulates creating a user.
@@ -54,7 +53,7 @@ public class NativeApiClientIntegrationTest {
          * @return the created user
          */
         @POST("/api/users")
-        User user(@Body User user);
+        User createUser(@Body User user);
     }
 
     /**
@@ -62,7 +61,7 @@ public class NativeApiClientIntegrationTest {
      *
      * @throws IOException if the server fails to start
      */
-    // 3. Setup the Local HTTP Server before all tests
+    // Setup the Local HTTP Server before all tests
     @BeforeAll
     static void startServer() throws IOException {
         // Bind to port 0 to let the OS pick a free port automatically
@@ -71,21 +70,24 @@ public class NativeApiClientIntegrationTest {
         // Mock GET Endpoint
         server.createContext("/api/users/1", exchange -> {
             String response = "{\"id\":1, \"name\":\"Alice\"}";
+            byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, response.length());
+            exchange.sendResponseHeaders(200, responseBytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
-                os.write(response.getBytes(StandardCharsets.UTF_8));
+                os.write(responseBytes);
             }
         });
 
         // Mock POST Endpoint
         server.createContext("/api/users", exchange -> {
-            // Echo back a successful creation response
+            // For integration testing, we just return the expected Bob user
             String response = "{\"id\": 2, \"name\": \"Bob\"}";
             exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(201, response.length());
+            // Use 201 Created for POST or 200 OK; NativeApiClient expects 2xx
+            byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(201, responseBytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
-                os.write(response.getBytes(StandardCharsets.UTF_8));
+                os.write(responseBytes);
             }
         });
 
@@ -105,7 +107,7 @@ public class NativeApiClientIntegrationTest {
     /**
      * Initializes a new instance of {@link NativeApiClient} configured to point at the local server.
      */
-    // 4. Setup the Client before each test
+    // Setup the Client before each test
     @BeforeEach
     void setUp() {
         apiClient = new NativeApiClient.Builder()
@@ -117,12 +119,12 @@ public class NativeApiClientIntegrationTest {
      * Validates that the client successfully sends a GET request and deserializes the response.
      */
     @Test
-    @DisplayName("Test SYNCHRONOUS GET request and deserialize JSON")
-    void testSynchronousGet() {
+    @DisplayName("Test GET request and deserialize JSON")
+    void testGet() {
         TestApiService service = apiClient.createService(TestApiService.class);
 
         // This call will block until the server responds
-        User user = service.getUser(1);
+        User user = service.getUser(1).join();
 
         assertNotNull(user);
         assertEquals(1, user.id());
@@ -133,12 +135,12 @@ public class NativeApiClientIntegrationTest {
      * Validates that the client successfully sends a POST request and deserializes the response.
      */
     @Test
-    @DisplayName("Test SYNCHRONOUS POST request and deserialize JSON")
-    void testGetJsonArray() {
+    @DisplayName("Test POST request and deserialize JSON")
+    void testPost() {
         TestApiService service = apiClient.createService(TestApiService.class);
 
         // This call will block until the server responds
-        User user = service.user(new User(2, "Bob"));
+        User user = service.createUser(new User(2, "Bob"));
 
         assertNotNull(user);
         assertEquals(2, user.id());
