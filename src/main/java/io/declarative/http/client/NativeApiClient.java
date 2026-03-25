@@ -1,23 +1,25 @@
 package io.declarative.http.client;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.declarative.http.api.annotation.Body;
 import io.declarative.http.api.annotation.DELETE;
 import io.declarative.http.api.annotation.GET;
+import io.declarative.http.api.annotation.Header;
+import io.declarative.http.api.annotation.Headers;
 import io.declarative.http.api.annotation.POST;
 import io.declarative.http.api.annotation.PUT;
 import io.declarative.http.api.annotation.Path;
 import io.declarative.http.api.annotation.Query;
+import io.declarative.http.api.annotation.Url;
+import io.declarative.http.api.converters.JacksonConverter;
+import io.declarative.http.api.converters.MessageConverter;
 import io.declarative.http.api.interceptors.Interceptor;
-import io.declarative.http.error.ApiErrorPayload;
-import io.declarative.http.error.ApiException;
 
+import java.io.InputStream;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Proxy;
-import java.lang.reflect.Type;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -28,63 +30,76 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.function.Supplier;
 
 /**
  * A declarative REST client based on Java's native {@link HttpClient}.
- * It creates implementations of interfaces dynamically using dynamic proxies,
- * similar to Retrofit or Feign.
+ * <p>
+ * This client allows you to define a Java interface with annotated methods,
+ * which are then translated into HTTP requests. It supports synchronous and
+ * asynchronous execution, request/response interception, and pluggable JSON
+ * serialization.
  *
  * @author Debopam
  */
 public class NativeApiClient {
 
     private final HttpClient httpClient;
-    private final String baseUrl;
-    private final ObjectMapper objectMapper;
+    private final Supplier<String> baseUrlSupplier;
+    private final MessageConverter converter;
     private final List<Interceptor> interceptors;
 
     private NativeApiClient(Builder builder) {
         this.httpClient = builder.httpClient;
-        this.baseUrl = builder.baseUrl;
-        this.objectMapper = builder.objectMapper;
+        this.baseUrlSupplier = builder.baseUrlSupplier;
+        this.converter = builder.converter;
         this.interceptors = List.copyOf(builder.interceptors);
     }
 
     /**
-     * Creates an implementation of the API endpoints defined by the given interface.
+     * Creates a dynamic proxy implementation of the provided API interface.
      *
-     * @param service the interface class defining the API
-     * @param <T>     the type of the interface
-     * @return a proxy object implementing the service interface
+     * @param apiInterface the interface class to implement
+     * @param <T>          the type of the API interface
+     * @return a proxy instance of the API interface
      */
     @SuppressWarnings("unchecked")
-    public <T> T createService(Class<T> service) {
+    public <T> T createService(Class<T> apiInterface) {
+        if (!apiInterface.isInterface()) {
+            throw new IllegalArgumentException("API declarations must be interfaces.");
+        }
         return (T) Proxy.newProxyInstance(
-                service.getClassLoader(),
-                new Class<?>[]{service},
+                apiInterface.getClassLoader(),
+                new Class<?>[]{apiInterface},
                 new ApiInvocationHandler()
         );
     }
 
     /**
-     * An invocation handler that intercepts method calls on the proxy and converts them
-     * into HTTP requests using the configured native HttpClient.
+     * The core invocation handler that translates method calls into HTTP requests.
      */
     private class ApiInvocationHandler implements InvocationHandler {
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            boolean isAsync = method.getReturnType().equals(CompletableFuture.class);
+            Class<?> targetClass = isAsync
+                    ? (Class<?>) ((ParameterizedType) method.getGenericReturnType()).getActualTypeArguments()[0]
+                    : method.getReturnType();
+
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder();
             String endpoint = "";
             String httpMethod = "GET";
+            String dynamicUrlOverride = null;
             StringBuilder queryBuilder = new StringBuilder();
             HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.noBody();
 
-            // Process Method Annotations (GET, POST)
+            // Determine HTTP Method and Endpoint Path
             if (method.isAnnotationPresent(GET.class)) {
                 endpoint = method.getAnnotation(GET.class).value();
+                httpMethod = "GET";
             } else if (method.isAnnotationPresent(POST.class)) {
-                httpMethod = "POST";
                 endpoint = method.getAnnotation(POST.class).value();
+                httpMethod = "POST";
             } else if (method.isAnnotationPresent(PUT.class)) {
                 endpoint = method.getAnnotation(PUT.class).value();
                 httpMethod = "PUT";
@@ -95,105 +110,94 @@ public class NativeApiClient {
                 throw new UnsupportedOperationException("HTTP Method annotation missing on " + method.getName());
             }
 
-            // Process Parameters (@Path, @Body, @Query)
+            //Process Static @Headers
+            if (method.isAnnotationPresent(Headers.class)) {
+                for (String header : method.getAnnotation(Headers.class).value()) {
+                    String[] parts = header.split(":", 2);
+                    if (parts.length == 2) requestBuilder.header(parts[0].trim(), parts[1].trim());
+                }
+            }
+
+            // Process Parameters (@Url, @Header, @Path, @Body, @Query)
             if (args != null) {
                 Parameter[] parameters = method.getParameters();
                 for (int i = 0; i < parameters.length; i++) {
-                    if (parameters[i].isAnnotationPresent(Path.class)) {
+                    Object arg = args[i];
+                    if (arg == null) continue;
+                    if (parameters[i].isAnnotationPresent(Url.class)) {
+                        dynamicUrlOverride = arg.toString(); // Captures the @Url override
+                    } else if (parameters[i].isAnnotationPresent(Header.class)) {
+                        requestBuilder.header(parameters[i].getAnnotation(Header.class).value(), arg.toString());
+                    } else if (parameters[i].isAnnotationPresent(Path.class)) {
                         String pathName = parameters[i].getAnnotation(Path.class).value();
-                        endpoint = endpoint.replace("{" + pathName + "}", args[i].toString());
+                        endpoint = endpoint.replace("{" + pathName + "}", arg.toString());
                     } else if (parameters[i].isAnnotationPresent(Query.class)) {
                         String queryName = parameters[i].getAnnotation(Query.class).value();
-                        String queryValue = URLEncoder.encode(args[i].toString(), StandardCharsets.UTF_8);
-                        char separator = (endpoint.contains("?") || queryBuilder.length() > 0) ? '&' : '?';
-                        queryBuilder.append(separator).append(queryName).append("=").append(queryValue);
+                        String queryValue = URLEncoder.encode(arg.toString(), StandardCharsets.UTF_8);
+                        queryBuilder.append(queryBuilder.length() == 0 ? "?" : "&")
+                                .append(queryName).append("=")
+                                .append(queryValue);
                     } else if (parameters[i].isAnnotationPresent(Body.class)) {
-                        String jsonBody = objectMapper.writeValueAsString(args[i]);
-                        bodyPublisher = HttpRequest.BodyPublishers.ofString(jsonBody);
+                        bodyPublisher = HttpRequest.BodyPublishers.ofByteArray(converter.serialize(arg));
+                        requestBuilder.header("Content-Type", "application/json");
                     }
                 }
             }
 
-            String fullUri = baseUrl + endpoint + queryBuilder.toString();
+            //Resolve Final URI
+            String finalUriStr = (dynamicUrlOverride != null)
+                    ? dynamicUrlOverride + queryBuilder.toString()
+                    : baseUrlSupplier.get() + endpoint + queryBuilder.toString();
             // Build and Execute Request
             HttpRequest request = requestBuilder
-                    .uri(URI.create(fullUri))
+                    .uri(URI.create(finalUriStr))
                     .method(httpMethod, bodyPublisher)
-                    .header("Content-Type", "application/json")
                     .build();
 
             // Pass through the interceptor chain
-            Interceptor.Chain chain = new HttpInterceptorChain(interceptors, 0, request, httpClient);
-            CompletableFuture<HttpResponse<String>> responseFuture = chain.proceed(request);
-
-            // Determine Return Type
-            boolean returnsFuture = CompletableFuture.class.isAssignableFrom(method.getReturnType());
-            Type targetType;
-
-            if (returnsFuture) {
-                // Extract 'T' from CompletableFuture<T>
-                Type genericReturnType = method.getGenericReturnType();
-                if (genericReturnType instanceof ParameterizedType parameterizedType) {
-                    targetType = parameterizedType.getActualTypeArguments()[0];
-                } else {
-                    targetType = Object.class;
-                }
-            } else {
-                targetType = method.getGenericReturnType();
-            }
+            HttpInterceptorChain chain = new HttpInterceptorChain(interceptors, 0, request, httpClient);
+            CompletableFuture<HttpResponse<InputStream>> responseFuture = chain.proceed(request);
 
             // Map the response body to the target Object
             CompletableFuture<Object> resultFuture = responseFuture.thenApply(response -> {
                 int status = response.statusCode();
-                if (targetType instanceof Class<?> clazz && clazz.equals(HttpResponse.class)) {
-                    return response;
-                }
+                InputStream stream = response.body();
 
-                if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                    if (targetType.equals(void.class) || targetType.equals(Void.class)) {
-                        return null;
-                    }
-                    if (targetType.equals(String.class)) {
-                        return response.body();
-                    }
-                    try {
-                        return objectMapper.readValue(response.body(), objectMapper.constructType(targetType));
-                    } catch (Exception e) {
-                        throw new CompletionException("Deserialization failed", e);
-                    }
-                } else {
-                    // --- ERROR PATH ---
-                    ApiErrorPayload errorPayload = null;
-                    try {
-                        // Attempt to parse the JSON error payload
-                        errorPayload = objectMapper.readValue(response.body(), ApiErrorPayload.class);
-                    } catch (Exception e) {
-                        // Ignore parsing errors (e.g., if the server returns raw HTML for a 500 error)
-                    }
+                try {
+                    if (status >= 200 && status < 300) {
+                        if (targetClass.equals(Void.TYPE)) return null;
 
-                    // Throw our custom exception. We wrap it in CompletionException because
-                    // Java requires it when throwing checked/custom exceptions inside thenApply.
-                    throw new CompletionException(new ApiException(status, errorPayload, response.body()));
+                        // If the user wants the raw stream for large file downloads, give it to them immediately
+                        if (targetClass.equals(InputStream.class)) return stream;
+
+                        if (targetClass.equals(byte[].class)) return stream.readAllBytes();
+                        if (targetClass.equals(String.class))
+                            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+
+                        // Otherwise, stream directly into the JSON parser
+                        return converter.deserialize(stream, targetClass);
+                    } else {
+                        // Error handling
+                        String errorBody = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                        throw new CompletionException(new RuntimeException("HTTP " + status + " - " + errorBody));
+                    }
+                } catch (Exception e) {
+                    throw new CompletionException("Stream Processing Failed", e);
                 }
             });
 
-            // Return Async or block for Sync
-            if (returnsFuture) {
-                return resultFuture;
-            } else {
-                try {
-                    return resultFuture.join();
-                } catch (CompletionException e) {
-                    // Unwrap our custom exception so the user can use standard try/catch
-                    if (e.getCause() instanceof ApiException) {
-                        throw (ApiException) e.getCause();
-                    }
-                    throw e; // Rethrow generic failures
-                }
+            if (isAsync) return resultFuture;
+            try {
+                return resultFuture.join();
+            } catch (CompletionException e) {
+                throw e.getCause();
             }
         }
     }
 
+    /**
+     * The internal implementation of the interceptor chain.
+     */
     private static class HttpInterceptorChain implements Interceptor.Chain {
         private final List<Interceptor> interceptors;
         private final int index;
@@ -212,51 +216,61 @@ public class NativeApiClient {
             return request;
         }
 
-        @Override
-        public CompletableFuture<HttpResponse<String>> proceed(HttpRequest request) {
+        @Override public CompletableFuture<HttpResponse<InputStream>> proceed(HttpRequest request) {
             if (index < interceptors.size()) {
-                // Pass the potentially modified request to the next chain link
-                HttpInterceptorChain nextChain = new HttpInterceptorChain(interceptors, index + 1, request, httpClient);
-                return interceptors.get(index).intercept(nextChain);
-            } else {
-                return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+                return interceptors.get(index).intercept(new HttpInterceptorChain(interceptors, index + 1, request, httpClient));
             }
+            // All responses are handled as InputStreams to prevent OutOfMemoryErrors on large payloads.
+            return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream());
         }
     }
 
     /**
-     * Builder for {@link NativeApiClient}.
-     * Mimics the Retrofit Builder pattern to configure the client.
+     * A builder for creating instances of {@link NativeApiClient}.
      */
     public static class Builder {
         private HttpClient httpClient = HttpClient.newHttpClient();
-        private String baseUrl;
-        private ObjectMapper objectMapper = new ObjectMapper();
+        private Supplier<String> baseUrlSupplier;
+        private MessageConverter converter = new JacksonConverter();
         private final List<Interceptor> interceptors = new ArrayList<>();
+
         /**
-         * Sets the base URL for the API.
+         * Sets the base URL for all API requests.
          *
          * @param baseUrl the base URL
          * @return this builder instance
          */
         public Builder baseUrl(String baseUrl) {
-            this.baseUrl = baseUrl;
+            this.baseUrlSupplier = () -> baseUrl;
             return this;
         }
 
         /**
-         * Sets the {@link HttpClient} to be used by the API client.
+         * Sets a custom {@link MessageConverter} for serializing and deserializing request/response bodies.
+         * Defaults to {@link JacksonConverter}.
          *
-         * @param client the HTTP client
+         * @param converter the message converter
          * @return this builder instance
          */
-        public Builder client(HttpClient client) {
-            this.httpClient = client;
+        public Builder converter(MessageConverter converter) {
+            this.converter = converter;
             return this;
         }
 
         /**
-         * Adds an {@link Interceptor} to the request execution chain.
+         * Sets the underlying {@link HttpClient} to use for requests.
+         * Defaults to a new client created with {@code HttpClient.newHttpClient()}.
+         *
+         * @param httpClient the client to use
+         * @return this builder instance
+         */
+        public Builder client(HttpClient httpClient) {
+            this.httpClient = httpClient;
+            return this;
+        }
+
+        /**
+         * Adds an {@link Interceptor} to the request processing chain.
          *
          * @param interceptor the interceptor to add
          * @return this builder instance
@@ -267,13 +281,13 @@ public class NativeApiClient {
         }
 
         /**
-         * Builds and returns a new {@link NativeApiClient}.
+         * Builds and returns a new {@link NativeApiClient} instance.
          *
-         * @return the constructed NativeApiClient
+         * @return the constructed client
          * @throws IllegalStateException if a base URL has not been provided
          */
         public NativeApiClient build() {
-            if (baseUrl == null) throw new IllegalStateException("Base URL required");
+            if (baseUrlSupplier == null) throw new IllegalStateException("Base URL required");
             return new NativeApiClient(this);
         }
     }

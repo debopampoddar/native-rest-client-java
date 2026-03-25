@@ -2,51 +2,54 @@ package io.declarative.http.api.auth;
 
 import io.declarative.http.api.interceptors.Interceptor;
 
+import java.io.InputStream;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
 /**
- * An asynchronous {@link Interceptor} that manages OAuth token authentication.
- * It automatically adds an access token and handles refreshing on a 401 response.
+ * An interceptor that handles OAuth 2.0 token management, including transparently
+ * refreshing expired tokens and retrying requests.
  *
  * @author Debopam
  */
 public class OAuthAsyncInterceptor implements Interceptor {
+
     private final AsyncTokenManager tokenManager;
 
-    /**
-     * Constructs a new {@link OAuthAsyncInterceptor}.
-     *
-     * @param tokenManager the manager responsible for providing tokens asynchronously
-     */
     public OAuthAsyncInterceptor(AsyncTokenManager tokenManager) {
         this.tokenManager = tokenManager;
     }
 
+    /**
+     * Intercepts the request to add the "Authorization" header. If the response is a 401 Unauthorized,
+     * it attempts to refresh the token and retries the request automatically.
+     *
+     * @param chain the interceptor chain
+     * @return a future completing with the HTTP response
+     */
     @Override
-    public CompletableFuture<HttpResponse<String>> intercept(Chain chain) {
+    public CompletableFuture<HttpResponse<InputStream>> intercept(Chain chain) {
         HttpRequest originalRequest = chain.request();
 
         return tokenManager.getAccessToken().thenCompose(token -> {
-            HttpRequest authRequest = appendToken(originalRequest, token);
+            HttpRequest requestWithToken = HttpRequest.newBuilder(originalRequest, (k, v) -> true)
+                    .header("Authorization", "Bearer " + token)
+                    .build();
 
-            return chain.proceed(authRequest).thenCompose(response -> {
+            return chain.proceed(requestWithToken).thenCompose(response -> {
                 if (response.statusCode() == 401) {
-                    System.out.println("401 detected. Refreshing token...");
+                    // Token expired, try to refresh and retry
                     return tokenManager.refreshAccessToken().thenCompose(newToken -> {
-                        HttpRequest retryRequest = appendToken(originalRequest, newToken);
-                        return chain.proceed(retryRequest);
+                        HttpRequest retriedRequest = HttpRequest.newBuilder(originalRequest, (k, v) -> true)
+                                .header("Authorization", "Bearer " + newToken)
+                                .build();
+                        return chain.proceed(retriedRequest);
                     });
                 }
                 return CompletableFuture.completedFuture(response);
             });
         });
-    }
-
-    private HttpRequest appendToken(HttpRequest request, String token) {
-        return HttpRequest.newBuilder(request, (k, v) -> true)
-                .setHeader("Authorization", "Bearer " + token)
-                .build();
     }
 }

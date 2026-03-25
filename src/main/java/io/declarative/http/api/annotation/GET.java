@@ -18,5 +18,5 @@ public @interface GET {
      *
      * @return the endpoint path
      */
-    String value();
+    String value() default "";
 }

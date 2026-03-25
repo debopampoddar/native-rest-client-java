@@ -4,10 +4,13 @@ import com.sun.net.httpserver.HttpServer;
 import io.declarative.http.api.annotation.Body;
 import io.declarative.http.api.annotation.DELETE;
 import io.declarative.http.api.annotation.GET;
+import io.declarative.http.api.annotation.Header;
+import io.declarative.http.api.annotation.Headers;
 import io.declarative.http.api.annotation.POST;
 import io.declarative.http.api.annotation.PUT;
 import io.declarative.http.api.annotation.Path;
 import io.declarative.http.api.annotation.Query;
+import io.declarative.http.api.annotation.Url;
 import io.declarative.http.api.auth.AsyncTokenManager;
 import io.declarative.http.api.auth.BasicAuthInterceptor;
 import io.declarative.http.api.auth.OAuthAsyncInterceptor;
@@ -17,42 +20,101 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * End-to-end integration tests for the {@link NativeApiClient}.
+ * <p>
+ * These tests use a lightweight, in-memory {@link HttpServer} to mock a real
+ * REST API. This allows for testing the full HTTP request/response lifecycle,
+ * including serialization, deserialization, authentication, and error handling.
+ *
+ * @author Debopam
+ */
 class NativeApiClientIntegrationTest {
 
     private static HttpServer server;
     private static String baseUrl;
 
+    /**
+     * A simple record used for serializing and deserializing JSON payloads in tests.
+     */
     public record TestData(String message) {
     }
 
-    // --- API Interface ---
+    /**
+     * Defines a standard set of API endpoints for integration testing,
+     * covering common HTTP methods and authentication schemes.
+     */
     public interface IntegrationService {
+        /**
+         * Tests a simple GET request with a query parameter.
+         */
         @GET("/api/public")
         TestData getPublicData(@Query("search") String searchTerm);
 
+        /**
+         * Tests the client's ability to handle server-side errors (HTTP 500).
+         */
         @GET("/api/public/error")
         TestData getPublicError();
 
+        /**
+         * Tests an endpoint protected by Basic Authentication.
+         */
         @GET("/api/basic")
         TestData getBasicSecuredData();
 
+        /**
+         * Tests an asynchronous POST request to an OAuth-protected endpoint.
+         */
         @POST("/api/oauth")
         CompletableFuture<TestData> postOAuthDataAsync(@Body TestData data);
 
+        /**
+         * Tests a PUT request with a path parameter and a request body.
+         */
         @PUT("/api/data/{id}")
         TestData updateData(@Path("id") int id, @Body TestData data);
 
+        /**
+         * Tests a DELETE request with a path parameter, expecting a raw String response.
+         */
         @DELETE("/api/data/{id}")
         String deleteData(@Path("id") int id);
+
+        /**
+         * Tests the combination of static headers from {@link Headers}
+         * and dynamic headers from the {@link Header} parameter annotation.
+         */
+        @Headers({
+                "Accept: application/json",
+                "User-Agent: NativeRestClient/1.0"
+        })
+        @GET("/api/secure")
+        TestData getSecureData(@Header("Authorization") String token);
+
+        /**
+         * Tests the ability to override the base URL at request time using the {@link Url} annotation.
+         */
+        @GET
+        TestData getDataFromDynamicUrl(@Url String fullUrl);
+
+        /**
+         * Tests streaming a large file download directly into an {@link InputStream}
+         * to avoid loading the entire response body into memory.
+         */
+        @GET
+        InputStream downloadLargeFile(@Url String fullUrl);
     }
 
     // --- Local Server Mock Setup ---
@@ -60,7 +122,7 @@ class NativeApiClientIntegrationTest {
     static void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress(0), 0);
 
-        // 1. No Auth Endpoint (Happy & Error)
+        // No Auth Endpoint (Happy & Error)
         server.createContext("/api/public", exchange -> {
             String query = exchange.getRequestURI().getQuery();
             if (exchange.getRequestURI().getPath().endsWith("/error")) {
@@ -70,7 +132,7 @@ class NativeApiClientIntegrationTest {
             }
         });
 
-        // 2. Basic Auth Endpoint
+        // Basic Auth Endpoint
         server.createContext("/api/basic", exchange -> {
             String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
             if ("Basic YWRtaW46cGFzc3dvcmQxMjM=".equals(authHeader)) { // "admin:password123" Base64'd
@@ -80,7 +142,7 @@ class NativeApiClientIntegrationTest {
             }
         });
 
-        // 3. OAuth Endpoint (Simulating token expiration)
+        // OAuth Endpoint (Simulating token expiration)
         server.createContext("/api/oauth", exchange -> {
             String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
             if ("Bearer fresh_token_999".equals(authHeader)) {
@@ -104,6 +166,32 @@ class NativeApiClientIntegrationTest {
             } else {
                 sendResponse(exchange, 405, "{\"message\": \"Method Not Allowed\"}");
             }
+        });
+
+        // Headers check
+        server.createContext("/api/secure", exchange -> {
+            String accept = exchange.getRequestHeaders().getFirst("Accept");
+            String userAgent = exchange.getRequestHeaders().getFirst("User-Agent");
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+
+            if ("application/json".equals(accept) && "NativeRestClient/1.0".equals(userAgent) && "Bearer Token123".equals(auth)) {
+                sendResponse(exchange, 200, "{\"message\": \"Headers are perfect\"}");
+            } else {
+                sendResponse(exchange, 400, "{\"message\": \"Missing or invalid headers\"}");
+            }
+        });
+
+        // Dynamic URL target
+        server.createContext("/external/data", exchange -> {
+            sendResponse(exchange, 200, "{\"message\": \"Reached dynamic endpoint\"}");
+        });
+
+        // Binary Stream Target (Simulating a file download)
+        server.createContext("/cdn/large-file.bin", exchange -> {
+            byte[] fakeFileBytes = new byte[]{ 0x01, 0x02, 0x03, 0x04, 0x05 };
+            exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
+            exchange.sendResponseHeaders(200, fakeFileBytes.length);
+            try (OutputStream os = exchange.getResponseBody()) { os.write(fakeFileBytes); }
         });
 
         server.setExecutor(null);
@@ -224,5 +312,45 @@ class NativeApiClientIntegrationTest {
         String response = api.deleteData(99);
 
         assertTrue(response.isEmpty(), "DELETE response should be empty for 204 No Content");
+    }
+
+    @Test
+    @DisplayName("Should successfully send both @Headers and @Header annotations")
+    void testDynamicAndStaticHeaders() {
+        IntegrationService api = new NativeApiClient.Builder().baseUrl(baseUrl).build().createService(IntegrationService.class);
+
+        TestData response = api.getSecureData("Bearer Token123");
+        assertEquals("Headers are perfect", response.message);
+    }
+
+    @Test
+    @DisplayName("Should route directly to a dynamic @Url, completely bypassing the baseUrl")
+    void testDynamicUrlOverride() {
+        // We initialize the client with a DUMMY base URL. It should never be hit.
+        IntegrationService api = new NativeApiClient.Builder().baseUrl("http://invalid-domain.com").build().createService(IntegrationService.class);
+
+        String dynamicTarget = baseUrl + "/external/data";
+        TestData response = api.getDataFromDynamicUrl(dynamicTarget);
+
+        assertEquals("Reached dynamic endpoint", response.message);
+    }
+
+    @Test
+    @DisplayName("Should return raw InputStream for large file downloads to prevent OOM")
+    void testLargeFileStreaming() throws IOException {
+        IntegrationService api = new NativeApiClient.Builder().baseUrl(baseUrl).build().createService(IntegrationService.class);
+
+        String dynamicTarget = baseUrl + "/cdn/large-file.bin";
+
+        // This executes the request but DOES NOT load the body into memory.
+        try (InputStream stream = api.downloadLargeFile(dynamicTarget)) {
+            assertNotNull(stream);
+
+            // Read bytes iteratively (just like you would saving to a file)
+            byte[] result = stream.readAllBytes();
+            assertEquals(5, result.length);
+            assertEquals(0x01, result[0]);
+            assertEquals(0x05, result[4]);
+        }
     }
 }
