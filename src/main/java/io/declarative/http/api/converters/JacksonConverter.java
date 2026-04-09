@@ -1,17 +1,20 @@
 package io.declarative.http.api.converters;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.declarative.http.error.RestClientException;
+
+import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.Type;
 
 /**
- * A {@link MessageConverter} implementation that uses the Jackson library
+ * A {@link ResponseConverter} implementation that uses the Jackson library
  * for JSON serialization and deserialization.
  *
  * @author Debopam
  */
-public class JacksonConverter implements MessageConverter {
+public class JacksonConverter implements ResponseConverter {
     private static final ObjectMapper DEFAULT_MAPPER
             = new ObjectMapper()
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
@@ -19,7 +22,7 @@ public class JacksonConverter implements MessageConverter {
             .setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
             .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
-    private final ObjectMapper mapper;
+    private final ObjectMapper objectMapper;
 
     /**
      * Creates a new converter with a default, pre-configured {@link ObjectMapper}.
@@ -34,23 +37,22 @@ public class JacksonConverter implements MessageConverter {
      * @param mapper the custom mapper to use
      */
     public JacksonConverter(ObjectMapper mapper) {
-        this.mapper = mapper;
+        this.objectMapper = mapper;
     }
 
     @Override
-    public byte[] serialize(Object object) throws Exception {
-        return mapper.writeValueAsBytes(object);
+    public <T> T convert(InputStream stream, JavaType javaType) {
+        try {
+            return objectMapper.readValue(stream, javaType);
+        } catch (IOException e) {
+            throw new RestClientException("JSON deserialization failed for type: " + javaType, e);
+        }
     }
 
     @Override
-    public <T> T deserialize(InputStream stream, Class<T> type) throws Exception {
-        if (stream == null) return null;
-        return mapper.readValue(stream, mapper.constructType(type));
-    }
-
-    @Override
-    public <T> T deserialize(InputStream stream, Type type) throws Exception {
-        if (stream == null) return null;
-        return mapper.readValue(stream, mapper.constructType(type));
+    public boolean supports(String contentType) {
+        return contentType != null &&
+                (contentType.contains("application/json") ||
+                        contentType.contains("text/json"));
     }
 }

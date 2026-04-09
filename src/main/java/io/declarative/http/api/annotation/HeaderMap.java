@@ -6,19 +6,8 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/**
- * Indicates that the annotated method represents an HTTP PUT request.
- *
- * @author Debopam
- */
+@Target(ElementType.PARAMETER)
 @Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.METHOD)
 @Documented
-public @interface PUT {
-    /**
-     * The relative URL path for the PUT request.
-     *
-     * @return the endpoint path
-     */
-    String value() default "";
+public @interface HeaderMap {
 }

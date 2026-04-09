@@ -1,46 +1,58 @@
 package io.declarative.http.api.auth;
 
-import io.declarative.http.api.interceptors.Interceptor;
+import io.declarative.http.api.interceptors.ClientInterceptor;
+import io.declarative.http.api.interceptors.InterceptorChain;
 
-import java.io.InputStream;
+import java.io.IOException;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.concurrent.CompletableFuture;
+import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
- * An interceptor that automatically adds a "Authorization: Basic ..." header to every request.
+ * Adds HTTP Basic Authentication credentials to every request.
  *
- * @author Debopam
+ * Header format:
+ *   Authorization: Basic base64(username:password)
+ *
+ * See RFC 7617 for details on the Basic scheme.
  */
-public class BasicAuthInterceptor implements Interceptor {
+public final class BasicAuthInterceptor implements ClientInterceptor {
 
-    private final String credentials;
+    private final Supplier<String> usernameSupplier;
+    private final Supplier<String> passwordSupplier;
 
-    /**
-     * Creates a new Basic Authentication interceptor.
-     *
-     * @param username the username
-     * @param password the password
-     */
-    public BasicAuthInterceptor(String username, String password) {
-        String authString = username + ":" + password;
-        this.credentials = "Basic " + Base64.getEncoder().encodeToString(authString.getBytes());
+    public BasicAuthInterceptor(Supplier<String> usernameSupplier,
+                                Supplier<String> passwordSupplier) {
+        this.usernameSupplier = Objects.requireNonNull(usernameSupplier, "usernameSupplier");
+        this.passwordSupplier = Objects.requireNonNull(passwordSupplier, "passwordSupplier");
     }
 
-    /**
-     * Adds the "Authorization" header and proceeds with the request.
-     *
-     * @param chain the interceptor chain
-     * @return a future completing with the HTTP response
-     */
+    public BasicAuthInterceptor(String username,
+                                String password) {
+        this.usernameSupplier = () -> Objects.requireNonNull(username, "usernameSupplier");
+        this.passwordSupplier = () -> Objects.requireNonNull(password, "passwordSupplier");
+    }
+
     @Override
-    public CompletableFuture<HttpResponse<InputStream>> intercept(Chain chain) {
-        HttpRequest originalRequest = chain.request();
-        // Java 16+ allows copying an existing request easily
-        HttpRequest authenticatedRequest = HttpRequest.newBuilder(originalRequest, (k, v) -> true)
-                .header("Authorization", credentials)
+    public HttpRequest intercept(HttpRequest request, InterceptorChain chain) throws IOException {
+        String username = usernameSupplier.get();
+        String password = passwordSupplier.get();
+
+        if (username == null || password == null) {
+            // If credentials are missing, we pass the request through unchanged.
+            return chain.proceed(request);
+        }
+
+        String userPass = username + ":" + password;
+        String encoded = Base64.getEncoder()
+                .encodeToString(userPass.getBytes(StandardCharsets.UTF_8));
+
+        HttpRequest authenticated = HttpRequest.newBuilder(request, (k, v) -> true)
+                .header("Authorization", "Basic " + encoded)
                 .build();
-        return chain.proceed(authenticatedRequest);
+
+        return chain.proceed(authenticated);
     }
 }
