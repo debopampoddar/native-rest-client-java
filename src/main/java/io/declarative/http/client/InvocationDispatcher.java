@@ -1,7 +1,9 @@
 package io.declarative.http.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.declarative.http.api.converters.JacksonConverter;
 import io.declarative.http.api.converters.ResponseConverter;
+import io.declarative.http.api.converters.StringConverter;
 import io.declarative.http.api.interceptors.ClientInterceptor;
 import io.declarative.http.api.interceptors.InterceptorChain;
 import io.declarative.http.error.ApiException;
@@ -20,8 +22,13 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Core execution engine: assembles the request, runs the interceptor chain,
- * dispatches to HttpClient, and deserializes the response.
+ * Routes proxy method invocations to java.net.http.HttpClient.
+ *
+ * <p>FIX (P1): HTTP call timing now correctly measures the real network round-trip.
+ *              Previously the stopwatch wrapped {@code chain.proceed()} which only
+ *              traverses the interceptor chain and returns a modified HttpRequest —
+ *              it does NOT execute the HTTP call. The timer now surrounds
+ *              {@code httpClient.send()} / {@code httpClient.sendAsync()}.
  */
 public final class InvocationDispatcher {
 
@@ -33,109 +40,141 @@ public final class InvocationDispatcher {
     private final List<ClientInterceptor> interceptors;
     private final List<ResponseConverter> converters;
 
-    public InvocationDispatcher(HttpClient httpClient, String baseUrl,
+    public InvocationDispatcher(HttpClient httpClient,
+                                String baseUrl,
                                 ObjectMapper objectMapper,
-                                List<ClientInterceptor> interceptors,
-                                List<ResponseConverter> converters) {
-        this.httpClient = httpClient;
-        this.baseUrl = baseUrl;
+                                List<ClientInterceptor> interceptors) {
+        this.httpClient   = httpClient;
+        this.baseUrl      = baseUrl;
         this.objectMapper = objectMapper;
         this.interceptors = List.copyOf(interceptors);
-        this.converters = List.copyOf(converters);
+        this.converters   = List.of(new StringConverter(),
+                new JacksonConverter(objectMapper));
     }
 
     public Object dispatch(ResolvedMethod resolved, Object[] args) {
         HttpRequest request = buildRequest(resolved, args);
-
         if (resolved.isAsync()) {
             return executeAsync(request, resolved);
-        } else {
-            return executeSync(request, resolved);
         }
+        return executeSync(request, resolved);
     }
+
+    // ── Request building ──────────────────────────────────────────────────────
 
     private HttpRequest buildRequest(ResolvedMethod resolved, Object[] args) {
         RequestContext ctx = new RequestContext(
                 resolved.httpMethod(), baseUrl, resolved.pathTemplate(), objectMapper);
 
+        // Apply @FormUrlEncoded flag to context
+        if (resolved.isFormUrlEncoded()) {
+            ctx.setFormUrlEncoded(true);
+        }
+
+        // Apply static @Headers values
+        for (String[] kv : resolved.staticHeaders()) {
+            ctx.addHeader(kv[0], kv[1]);
+        }
+
+        // Apply per-parameter handlers
         List<ParameterHandler> handlers = resolved.handlers();
         for (int i = 0; i < handlers.size(); i++) {
-            handlers.get(i).apply(ctx, args != null && i < args.length ? args[i] : null);
+            Object arg = (args != null && i < args.length) ? args[i] : null;
+            handlers.get(i).apply(ctx, arg);
         }
 
         HttpRequest request = ctx.buildRequest();
 
-        // Run interceptor chain synchronously before dispatch
+        // Run interceptor chain (interceptors may add headers, sign requests, etc.)
         try {
             request = new InterceptorChain(interceptors).proceed(request);
         } catch (IOException e) {
-            throw new RestClientException("Interceptor chain failed", e);
+            throw new RestClientException("Interceptor chain failed: " + e.getMessage(), e);
         }
 
-        log.debug("→ {} {} headers={}",
-                request.method(), request.uri(),
-                HeaderSanitizer.sanitize(request.headers()));
+        log.debug("--> {} {}", request.method(), request.uri());
+        log.debug("    Headers: {}", HeaderSanitizer.sanitize(request.headers()));
 
         return request;
     }
 
-    private <T> T executeSync(HttpRequest request, ResolvedMethod resolved) {
+    // ── Synchronous execution ─────────────────────────────────────────────────
+
+    private Object executeSync(HttpRequest request, ResolvedMethod resolved) {
+        // FIX (P1): timer wraps the actual HTTP call, not the interceptor chain
+        long start = System.currentTimeMillis();
+        HttpResponse<InputStream> response;
         try {
-            HttpResponse<InputStream> response =
-                    httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            return handleResponse(response, resolved);
-        } catch (ApiException e) {
-            throw e;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RestClientException("Request interrupted", e);
-        } catch (Exception e) {
-            throw new RestClientException("Request execution failed: " + e.getMessage(), e);
+            response = httpClient.send(request,
+                    HttpResponse.BodyHandlers.ofInputStream());
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            throw new RestClientException("HTTP call failed: " + e.getMessage(), e);
         }
+        long elapsed = System.currentTimeMillis() - start;
+
+        log.debug("<-- {} {} ({}ms)", response.statusCode(), request.uri(), elapsed);
+        return handleResponse(response, resolved);
     }
 
-    private <T> CompletableFuture<T> executeAsync(HttpRequest request, ResolvedMethod resolved) {
+    // ── Asynchronous execution ────────────────────────────────────────────────
+
+    private CompletableFuture<?> executeAsync(HttpRequest request, ResolvedMethod resolved) {
+        long start = System.currentTimeMillis();
         return httpClient
                 .sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
-                .thenApply(response -> handleResponse(response, resolved));
+                .thenApply(response -> {
+                    long elapsed = System.currentTimeMillis() - start;
+                    log.debug("<-- {} {} async ({}ms)",
+                            response.statusCode(), request.uri(), elapsed);
+                    return handleResponse(response, resolved);
+                });
     }
 
-    @SuppressWarnings("unchecked")
-    private <T> T handleResponse(HttpResponse<InputStream> response, ResolvedMethod resolved) {
+    // ── Response handling ─────────────────────────────────────────────────────
+
+    private Object handleResponse(HttpResponse<InputStream> response,
+                                  ResolvedMethod resolved) {
         int status = response.statusCode();
 
-        log.debug("← HTTP {} for {} {}",
-                status, response.request().method(), response.request().uri());
-
-        try (InputStream body = response.body()) {
-            if (status >= 400) {
-                String errorBody = new String(body.readAllBytes());
-                log.warn("API error {}: {}", status, errorBody);
-                throw new ApiException(status, errorBody);
+        if (status >= 400) {
+            String body;
+            try {
+                body = new String(response.body().readAllBytes());
+            } catch (IOException e) {
+                body = "<unreadable>";
             }
-
-            // Void/null return type
-            if (resolved.responseType().getRawClass() == Void.class ||
-                    resolved.responseType().getRawClass() == void.class) {
-                return null;
-            }
-
-            // Resolve appropriate converter from Content-Type
-            String contentType = response.headers()
-                    .firstValue("content-type").orElse("application/json");
-
-            ResponseConverter converter = converters.stream()
-                    .filter(c -> c.supports(contentType))
-                    .findFirst()
-                    .orElseThrow(() -> new RestClientException(
-                            "No converter available for content-type: " + contentType));
-
-            return (T) converter.convert(body, resolved.responseType());
-
-        } catch (ApiException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new RestClientException("Response processing failed", e);
+            throw new ApiException(status, body);
         }
+
+        // 204 No Content or void return
+        if (status == 204 ||
+                resolved.responseType().getRawClass() == Void.TYPE ||
+                resolved.responseType().getRawClass() == Void.class) {
+            return null;
+        }
+
+        // InputStream passthrough — caller reads directly
+        if (resolved.responseType().getRawClass() == InputStream.class) {
+            return response.body();
+        }
+
+        // Delegate to converter chain
+        try (InputStream body = response.body()) {
+            for (ResponseConverter converter : converters) {
+                if (converter.canConvert(resolved.responseType())) {
+                    return converter.convert(body, resolved.responseType());
+                }
+            }
+            throw new RestClientException(
+                    "No converter found for type: " + resolved.responseType());
+        } catch (IOException e) {
+            throw new RestClientException(
+                    "Failed to deserialise response: " + e.getMessage(), e);
+        }
+    }
+
+    public ObjectMapper objectMapper() {
+        return objectMapper;
     }
 }

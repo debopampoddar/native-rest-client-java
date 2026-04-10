@@ -6,50 +6,36 @@ import io.declarative.http.api.interceptors.InterceptorChain;
 import java.io.IOException;
 import java.net.http.HttpRequest;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
- * Adds an OAuth 2.0 access token to the Authorization header.
- *
- * By default uses the "Bearer" token type:
- *   Authorization: Bearer &lt;access_token&gt;
- *
- * The TokenManager is responsible for obtaining and refreshing tokens
- * according to OAuth 2.0 best practices [web:80][web:107][web:113].
+ * Adds {@code Authorization: Bearer <access_token>} (or custom token type) per RFC 6750.
+ * Token is obtained from a Supplier so it can be refreshed dynamically.
  */
 public final class OAuthInterceptor implements ClientInterceptor {
 
-    private final TokenManager tokenManager;
+    private final Supplier<String> accessTokenSupplier;
     private final String tokenType;
 
-    /**
-     * Creates an OAuth interceptor with token type "Bearer".
-     */
-    public OAuthInterceptor(TokenManager tokenManager) {
-        this(tokenManager, "Bearer");
+    public OAuthInterceptor(Supplier<String> accessTokenSupplier) {
+        this(accessTokenSupplier, "Bearer");
     }
 
-    /**
-     * Creates an OAuth interceptor with a custom token type
-     * (e.g. "Bearer", "Token", "MAC").
-     */
-    public OAuthInterceptor(TokenManager tokenManager, String tokenType) {
-        this.tokenManager = Objects.requireNonNull(tokenManager, "tokenManager");
+    public OAuthInterceptor(Supplier<String> accessTokenSupplier, String tokenType) {
+        this.accessTokenSupplier = Objects.requireNonNull(accessTokenSupplier, "accessTokenSupplier");
         this.tokenType = Objects.requireNonNull(tokenType, "tokenType");
     }
 
     @Override
-    public HttpRequest intercept(HttpRequest request, InterceptorChain chain) throws IOException {
-        String token = tokenManager.getAccessToken();
+    public HttpRequest intercept(HttpRequest request, InterceptorChain chain)
+            throws IOException {
+        String token = accessTokenSupplier.get();
         if (token == null || token.isBlank()) {
-            // No token available; pass through unchanged.
             return chain.proceed(request);
         }
-
-        String headerValue = tokenType + " " + token;
-        HttpRequest authenticated = HttpRequest.newBuilder(request, (k, v) -> true)
-                .header("Authorization", headerValue)
+        HttpRequest authed = HttpRequest.newBuilder(request, (k, v) -> true)
+                .header("Authorization", tokenType + " " + token)
                 .build();
-
-        return chain.proceed(authenticated);
+        return chain.proceed(authed);
     }
 }

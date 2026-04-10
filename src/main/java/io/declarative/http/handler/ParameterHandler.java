@@ -9,8 +9,7 @@ import io.declarative.http.client.RequestContext;
  * Instances are created ONCE per method at client creation time.
  */
 public sealed interface ParameterHandler
-         permits PathHandler, QueryHandler, QueryMapHandler,
-        HeaderHandler, HeaderMapHandler, BodyHandler {
+        permits BodyHandler, FieldHandler, HeaderHandler, HeaderMapHandler, PathHandler, QueryHandler, QueryMapHandler, UrlHandler {
 
     /**
      * Applies this handler's effect to the given request context.

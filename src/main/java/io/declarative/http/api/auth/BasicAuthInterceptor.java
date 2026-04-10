@@ -31,8 +31,10 @@ public final class BasicAuthInterceptor implements ClientInterceptor {
 
     public BasicAuthInterceptor(String username,
                                 String password) {
-        this.usernameSupplier = () -> Objects.requireNonNull(username, "usernameSupplier");
-        this.passwordSupplier = () -> Objects.requireNonNull(password, "passwordSupplier");
+        Objects.requireNonNull(username, "username must not be null");
+        Objects.requireNonNull(password, "password must not be null");
+        this.usernameSupplier = () -> username;
+        this.passwordSupplier = () -> password;
     }
 
     @Override

@@ -15,6 +15,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
 public final class OAuthClient {
 
@@ -76,13 +78,19 @@ public final class OAuthClient {
         TokenManager tokenManager = new RefreshingTokenManager(
                 fetcher,
                 Duration.ofSeconds(60),
-                null,
-                Duration.ofSeconds(30)
+                null
+        );
+
+        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+        TokenManager tokens = new RefreshingTokenManager(
+                fetcher::fetchNewToken,   // TokenFetcher
+                Duration.ofSeconds(30),           // refresh before expiry  ← FIX: was mislabelled
+                scheduler                         // ← this is the ScheduledExecutorService
         );
 
         return NativeRestClient
                 .builder("https://api.example.com")
-                .addInterceptor(new OAuthInterceptor(tokenManager))
+                .addInterceptor(new OAuthInterceptor(tokens::getAccessToken))
                 .build();
     }
 }

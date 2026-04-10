@@ -5,7 +5,6 @@ import io.declarative.http.api.interceptors.LoggingInterceptor;
 import io.declarative.http.api.interceptors.RetryInterceptor;
 import io.declarative.http.client.NativeRestClient;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -16,7 +15,7 @@ public class Main {
 
         NativeRestClient client = NativeRestClient
                 .builder("https://api.example.com")
-                .connectTimeout(Duration.ofSeconds(5))
+                //.connectTimeout(Duration.ofSeconds(5))
                 .addInterceptor(new LoggingInterceptor())
                 .addInterceptor(new BearerAuthInterceptor(() -> getAccessToken()))
                 .addInterceptor(new RetryInterceptor(3, 500L))

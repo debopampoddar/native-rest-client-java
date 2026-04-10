@@ -11,4 +11,6 @@ public interface TokenManager {
      * Implementations may block while performing a refresh.
      */
     String getAccessToken();
+
+    void invalidate();
 }

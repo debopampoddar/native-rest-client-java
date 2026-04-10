@@ -23,4 +23,9 @@ public final class FakeTokenManager implements TokenManager {
     public String getAccessToken() {
         return tokenRef.get();
     }
+
+    @Override
+    public void invalidate() {
+        tokenRef.set(null);
+    }
 }
