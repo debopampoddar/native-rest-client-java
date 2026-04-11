@@ -1,0 +1,311 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <meta http-equiv="Content-Type" content="text/html;charset=UTF-8"> 
+  <title>Coverage Report > ResolvedMethod</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/idea.min.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.min.js"></script>
+  <script type="text/javascript" src="../../js/highlightjs-line-numbers.min.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.declarative.http.client</a>
+</div>
+
+<h1>Coverage Summary for Class: ResolvedMethod (io.declarative.http.client)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Branch, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">ResolvedMethod</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (12/12)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    89.1%
+  </span>
+  <span class="absValue">
+    (41/46)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    94.4%
+  </span>
+  <span class="absValue">
+    (68/72)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<code class="sourceCode" id="sourceCode">&nbsp;package io.declarative.http.client;
+&nbsp;
+&nbsp;import com.fasterxml.jackson.databind.JavaType;
+&nbsp;import com.fasterxml.jackson.databind.ObjectMapper;
+&nbsp;import com.fasterxml.jackson.databind.type.TypeFactory;
+&nbsp;import io.declarative.http.api.annotation.Body;
+&nbsp;import io.declarative.http.api.annotation.DELETE;
+&nbsp;import io.declarative.http.api.annotation.Field;
+&nbsp;import io.declarative.http.api.annotation.FormUrlEncoded;
+&nbsp;import io.declarative.http.api.annotation.GET;
+&nbsp;import io.declarative.http.api.annotation.Header;
+&nbsp;import io.declarative.http.api.annotation.HeaderMap;
+&nbsp;import io.declarative.http.api.annotation.Headers;
+&nbsp;import io.declarative.http.api.annotation.PATCH;
+&nbsp;import io.declarative.http.api.annotation.POST;
+&nbsp;import io.declarative.http.api.annotation.PUT;
+&nbsp;import io.declarative.http.api.annotation.Path;
+&nbsp;import io.declarative.http.api.annotation.Query;
+&nbsp;import io.declarative.http.api.annotation.QueryMap;
+&nbsp;import io.declarative.http.api.annotation.Url;
+&nbsp;import io.declarative.http.error.RestClientException;
+&nbsp;import io.declarative.http.handler.BodyHandler;
+&nbsp;import io.declarative.http.handler.FieldHandler;
+&nbsp;import io.declarative.http.handler.HeaderHandler;
+&nbsp;import io.declarative.http.handler.HeaderMapHandler;
+&nbsp;import io.declarative.http.handler.ParameterHandler;
+&nbsp;import io.declarative.http.handler.PathHandler;
+&nbsp;import io.declarative.http.handler.QueryHandler;
+&nbsp;import io.declarative.http.handler.QueryMapHandler;
+&nbsp;import io.declarative.http.handler.UrlHandler;
+&nbsp;
+&nbsp;import java.lang.annotation.Annotation;
+&nbsp;import java.lang.reflect.Method;
+&nbsp;import java.lang.reflect.ParameterizedType;
+&nbsp;import java.lang.reflect.Type;
+&nbsp;import java.util.ArrayList;
+&nbsp;import java.util.Collections;
+&nbsp;import java.util.List;
+&nbsp;import java.util.concurrent.CompletableFuture;
+&nbsp;
+&nbsp;/**
+&nbsp; * Immutable resolved metadata for a single proxy method.
+&nbsp; */
+&nbsp;public final class ResolvedMethod {
+&nbsp;
+&nbsp;    private final String httpMethod;
+&nbsp;    private final String pathTemplate;
+&nbsp;    private final List&lt;ParameterHandler&gt; handlers;
+&nbsp;    private final JavaType responseType;
+&nbsp;    private final boolean isAsync;
+&nbsp;    private final List&lt;String[]&gt; staticHeaders;   // from @Headers
+&nbsp;    private final boolean formUrlEncoded;          // from @FormUrlEncoded
+&nbsp;    private final boolean wrapInEnvelope;
+&nbsp;
+&nbsp;    private ResolvedMethod(String httpMethod, String pathTemplate, List&lt;ParameterHandler&gt; handlers,
+&nbsp;                           JavaType responseType, boolean isAsync, List&lt;String[]&gt; staticHeaders,
+<b class="fc">&nbsp;                           boolean formUrlEncoded, boolean wrapInEnvelope) {</b>
+<b class="fc">&nbsp;        this.httpMethod = httpMethod;</b>
+<b class="fc">&nbsp;        this.pathTemplate = pathTemplate;</b>
+<b class="fc">&nbsp;        this.handlers = Collections.unmodifiableList(handlers);</b>
+<b class="fc">&nbsp;        this.responseType = responseType;</b>
+<b class="fc">&nbsp;        this.isAsync = isAsync;</b>
+<b class="fc">&nbsp;        this.staticHeaders = Collections.unmodifiableList(staticHeaders);</b>
+<b class="fc">&nbsp;        this.formUrlEncoded = formUrlEncoded;</b>
+<b class="fc">&nbsp;        this.wrapInEnvelope = wrapInEnvelope;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;
+&nbsp;    public String httpMethod() {
+<b class="fc">&nbsp;        return httpMethod;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    public String pathTemplate() {
+<b class="fc">&nbsp;        return pathTemplate;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    public List&lt;ParameterHandler&gt; handlers() {
+<b class="fc">&nbsp;        return handlers;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    public JavaType responseType() {
+<b class="fc">&nbsp;        return responseType;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    public boolean isAsync() {
+<b class="fc">&nbsp;        return isAsync;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    public List&lt;String[]&gt; staticHeaders() {
+<b class="fc">&nbsp;        return staticHeaders;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    public boolean isFormUrlEncoded() {
+<b class="fc">&nbsp;        return formUrlEncoded;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    public boolean wrapInEnvelope() {
+<b class="fc">&nbsp;        return wrapInEnvelope;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;
+&nbsp;    public static ResolvedMethod parse(Method method, ObjectMapper objectMapper) {
+&nbsp;        // HTTP verb
+&nbsp;        String httpVerb;
+&nbsp;        String path;
+<b class="fc">&nbsp;        if (method.isAnnotationPresent(GET.class)) {</b>
+<b class="fc">&nbsp;            httpVerb = &quot;GET&quot;;</b>
+<b class="fc">&nbsp;            path = method.getAnnotation(GET.class).value();</b>
+<b class="fc">&nbsp;        } else if (method.isAnnotationPresent(POST.class)) {</b>
+<b class="fc">&nbsp;            httpVerb = &quot;POST&quot;;</b>
+<b class="fc">&nbsp;            path = method.getAnnotation(POST.class).value();</b>
+<b class="fc">&nbsp;        } else if (method.isAnnotationPresent(PUT.class)) {</b>
+<b class="fc">&nbsp;            httpVerb = &quot;PUT&quot;;</b>
+<b class="fc">&nbsp;            path = method.getAnnotation(PUT.class).value();</b>
+<b class="fc">&nbsp;        } else if (method.isAnnotationPresent(DELETE.class)) {</b>
+<b class="fc">&nbsp;            httpVerb = &quot;DELETE&quot;;</b>
+<b class="fc">&nbsp;            path = method.getAnnotation(DELETE.class).value();</b>
+<b class="pc">&nbsp;        } else if (method.isAnnotationPresent(PATCH.class)) {</b>
+<b class="fc">&nbsp;            httpVerb = &quot;PATCH&quot;;</b>
+<b class="fc">&nbsp;            path = method.getAnnotation(PATCH.class).value();</b>
+&nbsp;        } else {
+<b class="nc">&nbsp;            throw new RestClientException(&quot;Method &#39;&quot; + method.getName()</b>
+&nbsp;                    + &quot;&#39; has no HTTP verb annotation &quot;
+&nbsp;                    + &quot;(expected @GET, @POST, @PUT, @DELETE, or @PATCH)&quot;);
+&nbsp;        }
+&nbsp;
+&nbsp;        // @FormUrlEncoded — method-level
+<b class="fc">&nbsp;        boolean isForm = method.isAnnotationPresent(FormUrlEncoded.class);</b>
+&nbsp;
+&nbsp;        // @Headers — static key: value pairs
+<b class="fc">&nbsp;        List&lt;String[]&gt; staticHdrs = new ArrayList&lt;&gt;();</b>
+<b class="fc">&nbsp;        if (method.isAnnotationPresent(Headers.class)) {</b>
+<b class="fc">&nbsp;            for (String header : method.getAnnotation(Headers.class).value()) {</b>
+<b class="fc">&nbsp;                int colon = header.indexOf(&#39;:&#39;);</b>
+<b class="pc">&nbsp;                if (colon &lt; 1) {</b>
+<b class="nc">&nbsp;                    throw new RestClientException(&quot;@Headers value must be &#39;Name: Value&#39;, got: &#39;&quot; + header + &quot;&#39;&quot;);</b>
+&nbsp;                }
+<b class="fc">&nbsp;                staticHdrs.add(new String[]{header.substring(0, colon).trim(), header.substring(colon + 1).trim()});</b>
+&nbsp;            }
+&nbsp;        }
+&nbsp;
+&nbsp;        // Parameter handlers
+<b class="fc">&nbsp;        Annotation[][] paramAnnotations = method.getParameterAnnotations();</b>
+<b class="fc">&nbsp;        List&lt;ParameterHandler&gt; handlers = new ArrayList&lt;&gt;();</b>
+<b class="fc">&nbsp;        for (int i = 0; i &lt; paramAnnotations.length; i++) {</b>
+<b class="fc">&nbsp;            handlers.add(resolveHandler(method, i, paramAnnotations[i], isForm));</b>
+&nbsp;        }
+&nbsp;
+&nbsp;        // Return type
+<b class="fc">&nbsp;        boolean wrap = false;</b>
+<b class="fc">&nbsp;        TypeFactory tf = objectMapper.getTypeFactory();</b>
+<b class="fc">&nbsp;        boolean async = method.getReturnType() == CompletableFuture.class;</b>
+&nbsp;        JavaType responseType;
+&nbsp;
+<b class="fc">&nbsp;        Type declared = async</b>
+<b class="fc">&nbsp;                ? ((ParameterizedType) method.getGenericReturnType()).getActualTypeArguments()[0]</b>
+<b class="fc">&nbsp;                : method.getGenericReturnType();</b>
+&nbsp;
+<b class="fc">&nbsp;        JavaType declaredType = tf.constructType(declared);</b>
+<b class="fc">&nbsp;        if (declaredType.getRawClass() == HttpResponseEnvelope.class) {</b>
+<b class="fc">&nbsp;            wrap = true;</b>
+<b class="fc">&nbsp;            JavaType inner = declaredType.containedTypeOrUnknown(0);</b>
+<b class="fc">&nbsp;            responseType = inner;</b>
+&nbsp;        } else {
+<b class="fc">&nbsp;            responseType = declaredType;</b>
+&nbsp;        }
+&nbsp;
+<b class="fc">&nbsp;        return new ResolvedMethod(httpVerb, path, handlers, responseType, async, staticHdrs, isForm, wrap);</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    private static ParameterHandler resolveHandler(Method method, int index, Annotation[] annotations, boolean isForm) {
+<b class="pc">&nbsp;        for (Annotation ann : annotations) {</b>
+<b class="fc">&nbsp;            if (ann instanceof Path p) return new PathHandler(p.value(), p.encoded());</b>
+<b class="fc">&nbsp;            if (ann instanceof Query q) return new QueryHandler(q.value(), q.encoded());</b>
+<b class="fc">&nbsp;            if (ann instanceof QueryMap qm) return new QueryMapHandler(qm.encoded());</b>
+<b class="fc">&nbsp;            if (ann instanceof Header h) return new HeaderHandler(h.value());</b>
+<b class="fc">&nbsp;            if (ann instanceof HeaderMap) return new HeaderMapHandler();</b>
+<b class="fc">&nbsp;            if (ann instanceof Body) return new BodyHandler();</b>
+<b class="fc">&nbsp;            if (ann instanceof Url) return new UrlHandler();</b>
+<b class="pc">&nbsp;            if (ann instanceof Field f) return new FieldHandler(f.value(), f.encoded());</b>
+&nbsp;        }
+<b class="nc">&nbsp;        throw new RestClientException(&quot;Parameter &quot; + index + &quot; of &#39;&quot; + method.getName()</b>
+&nbsp;                + &quot;&#39; has no recognised annotation. Supported: &quot;
+&nbsp;                + &quot;@Path, @Query, @QueryMap, @Header, @HeaderMap, @Body, @Url, @Field&quot;);
+&nbsp;    }
+&nbsp;
+&nbsp;    public static void validateInterface(Class&lt;?&gt; service) {
+<b class="pc">&nbsp;        if (!service.isInterface()) {</b>
+<b class="nc">&nbsp;            throw new RestClientException(service.getName() + &quot; is not an interface&quot;);</b>
+&nbsp;        }
+<b class="fc">&nbsp;        if (service.getDeclaredMethods().length == 0) {</b>
+<b class="fc">&nbsp;            throw new RestClientException(service.getName() + &quot; declares no methods — nothing to proxy&quot;);</b>
+&nbsp;        }
+&nbsp;    }
+&nbsp;}
+</code>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+      hljs.highlightAll()
+      hljs.initLineNumbersOnLoad();
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2026-04-11 01:08</div>
+</div>
+</body>
+</html>

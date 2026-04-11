@@ -1,0 +1,307 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <meta http-equiv="Content-Type" content="text/html;charset=UTF-8"> 
+  <title>Coverage Report > NativeRestClient</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/idea.min.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.min.js"></script>
+  <script type="text/javascript" src="../../js/highlightjs-line-numbers.min.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.declarative.http.client</a>
+</div>
+
+<h1>Coverage Summary for Class: NativeRestClient (io.declarative.http.client)</h1>
+
+<table class="coverageStats">
+
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Branch, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">NativeRestClient</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (5/5)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    50%
+  </span>
+  <span class="absValue">
+    (1/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    91.7%
+  </span>
+  <span class="absValue">
+    (11/12)
+  </span>
+</td>
+</tr>
+  <tr>
+    <td class="name">NativeRestClient$Builder</td>
+<td class="coverageStat">
+  <span class="percent">
+    66.7%
+  </span>
+  <span class="absValue">
+    (6/9)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    62.5%
+  </span>
+  <span class="absValue">
+    (5/8)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    75%
+  </span>
+  <span class="absValue">
+    (27/36)
+  </span>
+</td>
+  </tr>
+<tr>
+  <td class="name"><strong>Total</strong></td>
+<td class="coverageStat">
+  <span class="percent">
+    78.6%
+  </span>
+  <span class="absValue">
+    (11/14)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    60%
+  </span>
+  <span class="absValue">
+    (6/10)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    79.2%
+  </span>
+  <span class="absValue">
+    (38/48)
+  </span>
+</td>
+</tr>
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<code class="sourceCode" id="sourceCode">&nbsp;package io.declarative.http.client;
+&nbsp;
+&nbsp;import com.fasterxml.jackson.databind.ObjectMapper;
+&nbsp;import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+&nbsp;import io.declarative.http.api.converters.JacksonConverter;
+&nbsp;import io.declarative.http.api.converters.ResponseConverter;
+&nbsp;import io.declarative.http.api.converters.StringConverter;
+&nbsp;import io.declarative.http.api.interceptors.ClientInterceptor;
+&nbsp;import io.declarative.http.api.interceptors.HttpExchangeInterceptor;
+&nbsp;
+&nbsp;import java.lang.reflect.Method;
+&nbsp;import java.net.http.HttpClient;
+&nbsp;import java.time.Duration;
+&nbsp;import java.util.ArrayList;
+&nbsp;import java.util.List;
+&nbsp;import java.util.Map;
+&nbsp;import java.util.Objects;
+&nbsp;import java.util.concurrent.ConcurrentHashMap;
+&nbsp;import java.util.concurrent.Executor;
+&nbsp;
+&nbsp;/**
+&nbsp; * Entry point: builds type-safe HTTP client proxies from annotated interfaces.
+&nbsp; */
+&nbsp;public final class NativeRestClient {
+&nbsp;
+&nbsp;    private final InvocationDispatcher dispatcher;
+<b class="fc">&nbsp;    private final Map&lt;Method, ResolvedMethod&gt; methodCache = new ConcurrentHashMap&lt;&gt;();</b>
+&nbsp;
+<b class="fc">&nbsp;    private NativeRestClient(InvocationDispatcher dispatcher) {</b>
+<b class="fc">&nbsp;        this.dispatcher = dispatcher;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Creates a type-safe proxy for the given API interface.
+&nbsp;     */
+&nbsp;    @SuppressWarnings(&quot;unchecked&quot;)
+&nbsp;    public &lt;T&gt; T create(Class&lt;T&gt; service) {
+<b class="fc">&nbsp;        ResolvedMethod.validateInterface(service);</b>
+&nbsp;
+<b class="fc">&nbsp;        return (T) java.lang.reflect.Proxy.newProxyInstance(</b>
+<b class="fc">&nbsp;                service.getClassLoader(),</b>
+&nbsp;                new Class&lt;?&gt;[]{service},
+&nbsp;                (proxy, method, args) -&gt; {
+&nbsp;                    // Short-circuit Object methods (equals, hashCode, toString)
+<b class="pc">&nbsp;                    if (method.getDeclaringClass() == Object.class) {</b>
+<b class="nc">&nbsp;                        return method.invoke(this, args);</b>
+&nbsp;                    }
+<b class="fc">&nbsp;                    ResolvedMethod resolved = methodCache.computeIfAbsent(</b>
+&nbsp;                            method,
+<b class="fc">&nbsp;                            m -&gt; ResolvedMethod.parse(m, dispatcher.objectMapper())</b>
+&nbsp;                    );
+<b class="fc">&nbsp;                    return dispatcher.dispatch(resolved, args);</b>
+&nbsp;                }
+&nbsp;        );
+&nbsp;    }
+&nbsp;
+&nbsp;    // ── Builder ───────────────────────────────────────────────────────────────
+&nbsp;
+&nbsp;    public static Builder builder(String baseUrl) {
+<b class="fc">&nbsp;        return new Builder(baseUrl);</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    public static final class Builder {
+&nbsp;
+&nbsp;        private final String baseUrl;
+&nbsp;        private HttpClient httpClient;
+&nbsp;        private ObjectMapper objectMapper;
+<b class="fc">&nbsp;        private final List&lt;ClientInterceptor&gt; interceptors = new ArrayList&lt;&gt;();</b>
+<b class="fc">&nbsp;        private final List&lt;ResponseConverter&gt; converters = new ArrayList&lt;&gt;();</b>
+&nbsp;        private Executor executor; // optional
+<b class="fc">&nbsp;        private final List&lt;HttpExchangeInterceptor&gt; exchangeInterceptors = new ArrayList&lt;&gt;();</b>
+&nbsp;
+&nbsp;        public Builder executor(Executor executor) {
+<b class="fc">&nbsp;            this.executor = Objects.requireNonNull(executor, &quot;executor&quot;);</b>
+<b class="fc">&nbsp;            return this;</b>
+&nbsp;        }
+&nbsp;
+<b class="fc">&nbsp;        private Builder(String baseUrl) {</b>
+<b class="fc">&nbsp;            Objects.requireNonNull(baseUrl, &quot;baseUrl must not be null&quot;);</b>
+<b class="pc">&nbsp;            this.baseUrl = baseUrl.endsWith(&quot;/&quot;)</b>
+<b class="nc">&nbsp;                    ? baseUrl.substring(0, baseUrl.length() - 1)</b>
+<b class="fc">&nbsp;                    : baseUrl;</b>
+&nbsp;
+&nbsp;            // Default converters in priority order
+<b class="fc">&nbsp;            converters.add(new StringConverter());</b>
+&nbsp;            // JacksonConverter will be added in build() once we know the final ObjectMapper
+&nbsp;        }
+&nbsp;
+&nbsp;        public Builder httpClient(HttpClient httpClient) {
+<b class="nc">&nbsp;            this.httpClient = Objects.requireNonNull(httpClient, &quot;httpClient&quot;);</b>
+<b class="nc">&nbsp;            return this;</b>
+&nbsp;        }
+&nbsp;
+&nbsp;        /**
+&nbsp;         * Provides a custom ObjectMapper. If not set, a default one with
+&nbsp;         * {@link JavaTimeModule} is created once and reused for all calls.
+&nbsp;         */
+&nbsp;        public Builder objectMapper(ObjectMapper objectMapper) {
+<b class="nc">&nbsp;            this.objectMapper = Objects.requireNonNull(objectMapper, &quot;objectMapper&quot;);</b>
+<b class="nc">&nbsp;            return this;</b>
+&nbsp;        }
+&nbsp;
+&nbsp;        public Builder addInterceptor(ClientInterceptor interceptor) {
+<b class="fc">&nbsp;            interceptors.add(Objects.requireNonNull(interceptor, &quot;interceptor&quot;));</b>
+<b class="fc">&nbsp;            return this;</b>
+&nbsp;        }
+&nbsp;
+&nbsp;        /**
+&nbsp;         * Registers an additional response converter (e.g. XML, Protobuf).
+&nbsp;         * Converters are consulted in registration order before Jackson.
+&nbsp;         */
+&nbsp;        public Builder addConverter(ResponseConverter converter) {
+<b class="nc">&nbsp;            converters.add(Objects.requireNonNull(converter, &quot;converter&quot;));</b>
+<b class="nc">&nbsp;            return this;</b>
+&nbsp;        }
+&nbsp;
+&nbsp;        public Builder addExchangeInterceptor(HttpExchangeInterceptor interceptor) {
+<b class="fc">&nbsp;            this.exchangeInterceptors.add(Objects.requireNonNull(interceptor));</b>
+<b class="fc">&nbsp;            return this;</b>
+&nbsp;        }
+&nbsp;
+&nbsp;        private HttpClient buildDefaultClient() {
+<b class="fc">&nbsp;            HttpClient.Builder builder = HttpClient.newBuilder()</b>
+<b class="fc">&nbsp;                    .connectTimeout(Duration.ofSeconds(10));</b>
+<b class="fc">&nbsp;            if (executor != null) {</b>
+<b class="fc">&nbsp;                builder.executor(executor);</b>
+&nbsp;            }
+<b class="fc">&nbsp;            return builder.build();</b>
+&nbsp;        }
+&nbsp;
+&nbsp;        public NativeRestClient build() {
+<b class="pc">&nbsp;            ObjectMapper om = (objectMapper != null)</b>
+<b class="nc">&nbsp;                    ? objectMapper</b>
+<b class="fc">&nbsp;                    : new ObjectMapper().registerModule(new JavaTimeModule());</b>
+&nbsp;
+<b class="pc">&nbsp;            HttpClient client = (httpClient != null)</b>
+<b class="nc">&nbsp;                    ? httpClient</b>
+<b class="fc">&nbsp;                    : buildDefaultClient();</b>
+&nbsp;
+<b class="fc">&nbsp;            List&lt;ResponseConverter&gt; finalConverters = new ArrayList&lt;&gt;(converters);</b>
+<b class="fc">&nbsp;            finalConverters.add(new JacksonConverter(om)); // last in chain</b>
+&nbsp;
+<b class="fc">&nbsp;            InvocationDispatcher dispatcher = new InvocationDispatcher(</b>
+&nbsp;                    client, baseUrl, om, interceptors, finalConverters, exchangeInterceptors);
+&nbsp;
+<b class="fc">&nbsp;            return new NativeRestClient(dispatcher);</b>
+&nbsp;        }
+&nbsp;    }
+&nbsp;}
+</code>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+      hljs.highlightAll()
+      hljs.initLineNumbersOnLoad();
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2026-04-11 01:08</div>
+</div>
+</body>
+</html>

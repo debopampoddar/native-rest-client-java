@@ -1,0 +1,106 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <meta http-equiv="Content-Type" content="text/html;charset=UTF-8"> 
+  <title>Coverage Report > Field</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/idea.min.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.min.js"></script>
+  <script type="text/javascript" src="../../js/highlightjs-line-numbers.min.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.declarative.http.api.annotation</a>
+</div>
+
+<h1>Coverage Summary for Class: Field (io.declarative.http.api.annotation)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+</tr>
+<tr>
+  <td class="name">Field</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<code class="sourceCode" id="sourceCode">&nbsp;package io.declarative.http.api.annotation;
+&nbsp;
+&nbsp;import java.lang.annotation.ElementType;
+&nbsp;import java.lang.annotation.Retention;
+&nbsp;import java.lang.annotation.RetentionPolicy;
+&nbsp;import java.lang.annotation.Target;
+&nbsp;
+&nbsp;/**
+&nbsp; * Denotes a single named form field for {@link FormUrlEncoded} requests.
+&nbsp; *
+&nbsp; * &lt;p&gt;Each annotated parameter is URL-encoded and appended to the request body as
+&nbsp; * {@code application/x-www-form-urlencoded} in the format {@code name=value}.
+&nbsp; *
+&nbsp; * &lt;p&gt;&lt;b&gt;Usage — must be paired with {@link FormUrlEncoded} on the method:&lt;/b&gt;
+&nbsp; * &lt;pre&gt;{@code
+&nbsp; * @FormUrlEncoded
+&nbsp; * @POST(&quot;/auth/token&quot;)
+&nbsp; * String login(@Field(&quot;username&quot;) String username,
+&nbsp; *              @Field(&quot;password&quot;) String password);
+&nbsp; * }&lt;/pre&gt;
+&nbsp; *
+&nbsp; */
+&nbsp;@Retention(RetentionPolicy.RUNTIME)
+&nbsp;@Target(ElementType.PARAMETER)
+&nbsp;public @interface Field {
+&nbsp;
+&nbsp;    /**
+&nbsp;     * The form field name sent in the request body.
+&nbsp;     */
+&nbsp;    String value();
+&nbsp;
+&nbsp;    /**
+&nbsp;     * If {@code true} the value is assumed to already be URL-encoded and is
+&nbsp;     * sent as-is. If {@code false} (default) the value is percent-encoded
+&nbsp;     * using UTF-8 before being written to the body.
+&nbsp;     */
+&nbsp;    boolean encoded() default false;
+&nbsp;}
+</code>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+      hljs.highlightAll()
+      hljs.initLineNumbersOnLoad();
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2026-04-11 01:08</div>
+</div>
+</body>
+</html>

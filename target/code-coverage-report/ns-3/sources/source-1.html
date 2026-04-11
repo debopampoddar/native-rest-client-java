@@ -1,0 +1,221 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <meta http-equiv="Content-Type" content="text/html;charset=UTF-8"> 
+  <title>Coverage Report > JacksonConverter</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/idea.min.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.min.js"></script>
+  <script type="text/javascript" src="../../js/highlightjs-line-numbers.min.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.declarative.http.api.converters</a>
+</div>
+
+<h1>Coverage Summary for Class: JacksonConverter (io.declarative.http.api.converters)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Branch, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">JacksonConverter</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    33.3%
+  </span>
+  <span class="absValue">
+    (1/3)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    0%
+  </span>
+  <span class="absValue">
+    (0/4)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    40%
+  </span>
+  <span class="absValue">
+    (2/5)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<code class="sourceCode" id="sourceCode">&nbsp;package io.declarative.http.api.converters;
+&nbsp;
+&nbsp;import com.fasterxml.jackson.databind.JavaType;
+&nbsp;import com.fasterxml.jackson.databind.ObjectMapper;
+&nbsp;
+&nbsp;import java.io.IOException;
+&nbsp;import java.io.InputStream;
+&nbsp;import java.util.Objects;
+&nbsp;
+&nbsp;/**
+&nbsp; * Converter that deserialises JSON response bodies using Jackson&#39;s
+&nbsp; * {@link ObjectMapper}.
+&nbsp; *
+&nbsp; * &lt;p&gt;Handles all return types &lt;em&gt;except&lt;/em&gt;:
+&nbsp; * &lt;ul&gt;
+&nbsp; *   &lt;li&gt;{@link String} — handled by the higher-priority {@link StringConverter}&lt;/li&gt;
+&nbsp; *   &lt;li&gt;{@link InputStream} — passed through directly by {@code InvocationDispatcher}
+&nbsp; *       before the converter chain is consulted&lt;/li&gt;
+&nbsp; *   &lt;li&gt;{@code void} / {@code Void} — short-circuited in {@code InvocationDispatcher}
+&nbsp; *       for 204 responses&lt;/li&gt;
+&nbsp; * &lt;/ul&gt;
+&nbsp; *
+&nbsp; * &lt;p&gt;The {@link ObjectMapper} instance is injected at construction time and is the
+&nbsp; * same shared instance configured on {@code NativeRestClient.Builder}. It is
+&nbsp; * &lt;em&gt;not&lt;/em&gt; created per-request.
+&nbsp; *
+&nbsp; * &lt;h3&gt;Supported return types (examples)&lt;/h3&gt;
+&nbsp; * &lt;pre&gt;{@code
+&nbsp; * public interface UserApi {
+&nbsp; *
+&nbsp; *     @GET(&quot;/users/{id}&quot;)
+&nbsp; *     User getUser(@Path(&quot;id&quot;) long id);                    // POJO
+&nbsp; *
+&nbsp; *     @GET(&quot;/users&quot;)
+&nbsp; *     List&lt;User&gt; listUsers();                               // generic List
+&nbsp; *
+&nbsp; *     @GET(&quot;/config&quot;)
+&nbsp; *     Map&lt;String, Object&gt; getConfig();                      // generic Map
+&nbsp; *
+&nbsp; *     @GET(&quot;/users/{id}&quot;)
+&nbsp; *     CompletableFuture&lt;User&gt; getUserAsync(@Path(&quot;id&quot;) long id); // async POJO
+&nbsp; *
+&nbsp; *     @GET(&quot;/events&quot;)
+&nbsp; *     CompletableFuture&lt;List&lt;Event&gt;&gt; streamEvents();        // async generic List
+&nbsp; * }
+&nbsp; * }&lt;/pre&gt;
+&nbsp; *
+&nbsp; * &lt;h3&gt;Custom ObjectMapper example&lt;/h3&gt;
+&nbsp; * &lt;pre&gt;{@code
+&nbsp; * ObjectMapper mapper = new ObjectMapper()
+&nbsp; *     .registerModule(new JavaTimeModule())
+&nbsp; *     .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+&nbsp; *
+&nbsp; * NativeRestClient client = NativeRestClient.builder(&quot;https://api.example.com&quot;)
+&nbsp; *     .objectMapper(mapper)
+&nbsp; *     .build();
+&nbsp; * }&lt;/pre&gt;
+&nbsp; */
+&nbsp;public final class JacksonConverter implements ResponseConverter {
+&nbsp;
+&nbsp;    private final ObjectMapper objectMapper;
+&nbsp;
+&nbsp;    /**
+&nbsp;     * @param objectMapper the shared Jackson mapper; must not be {@code null}
+&nbsp;     */
+<b class="fc">&nbsp;    public JacksonConverter(ObjectMapper objectMapper) {</b>
+<b class="fc">&nbsp;        this.objectMapper = Objects.requireNonNull(objectMapper,</b>
+&nbsp;                &quot;objectMapper must not be null&quot;);
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Returns {@code true} for all types except {@link String} and
+&nbsp;     * {@link InputStream}, which are handled by other mechanisms.
+&nbsp;     *
+&nbsp;     * &lt;p&gt;Jackson can intrinsically handle all other types — POJOs, collections,
+&nbsp;     * maps, enums, primitives, records, and sealed classes — using type
+&nbsp;     * information embedded in the {@link JavaType}.
+&nbsp;     */
+&nbsp;    @Override
+&nbsp;    public boolean canConvert(JavaType type) {
+<b class="nc">&nbsp;        Class&lt;?&gt; raw = type.getRawClass();</b>
+<b class="nc">&nbsp;        return raw != String.class &amp;&amp; raw != InputStream.class;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Deserialises the JSON response body into the specified Java type.
+&nbsp;     *
+&nbsp;     * &lt;p&gt;Delegates directly to {@link ObjectMapper#readValue(InputStream, JavaType)},
+&nbsp;     * which correctly handles:
+&nbsp;     * &lt;ul&gt;
+&nbsp;     *   &lt;li&gt;Generic types ({@code List&lt;User&gt;}, {@code Map&lt;String, Long&gt;})&lt;/li&gt;
+&nbsp;     *   &lt;li&gt;Parameterised types ({@code Page&lt;Item&gt;})&lt;/li&gt;
+&nbsp;     *   &lt;li&gt;Nested generics ({@code Map&lt;String, List&lt;Event&gt;&gt;})&lt;/li&gt;
+&nbsp;     * &lt;/ul&gt;
+&nbsp;     *
+&nbsp;     * @param body the raw JSON response {@link InputStream} (non-null, open)
+&nbsp;     * @param type the fully-resolved target {@link JavaType}
+&nbsp;     * @return the deserialised Java object
+&nbsp;     * @throws IOException if the JSON is malformed or the type mapping fails
+&nbsp;     */
+&nbsp;    @Override
+&nbsp;    public Object convert(InputStream body, JavaType type) throws IOException {
+<b class="nc">&nbsp;        return objectMapper.readValue(body, type);</b>
+&nbsp;    }
+&nbsp;}
+</code>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+      hljs.highlightAll()
+      hljs.initLineNumbersOnLoad();
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2026-04-11 01:08</div>
+</div>
+</body>
+</html>

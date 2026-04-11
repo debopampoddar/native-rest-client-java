@@ -1,0 +1,403 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <meta http-equiv="Content-Type" content="text/html;charset=UTF-8"> 
+  <title>Coverage Report > RequestContext</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/idea.min.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.min.js"></script>
+  <script type="text/javascript" src="../../js/highlightjs-line-numbers.min.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.declarative.http.client</a>
+</div>
+
+<h1>Coverage Summary for Class: RequestContext (io.declarative.http.client)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Branch, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">RequestContext</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (11/11)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    67.6%
+  </span>
+  <span class="absValue">
+    (23/34)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    83.9%
+  </span>
+  <span class="absValue">
+    (47/56)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<code class="sourceCode" id="sourceCode">&nbsp;package io.declarative.http.client;
+&nbsp;
+&nbsp;import com.fasterxml.jackson.databind.ObjectMapper;
+&nbsp;import io.declarative.http.error.RestClientException;
+&nbsp;
+&nbsp;import java.net.URI;
+&nbsp;import java.net.http.HttpRequest;
+&nbsp;import java.nio.charset.StandardCharsets;
+&nbsp;import java.util.ArrayList;
+&nbsp;import java.util.LinkedHashMap;
+&nbsp;import java.util.List;
+&nbsp;import java.util.Map;
+&nbsp;import java.util.StringJoiner;
+&nbsp;
+&nbsp;/**
+&nbsp; * Mutable accumulator that collects URI fragments, headers, query parameters,
+&nbsp; * form fields, and body across all {@link io.declarative.http.handler.ParameterHandler}
+&nbsp; * instances before producing the final immutable {@link HttpRequest}.
+&nbsp; *
+&nbsp; * &lt;p&gt;Lifecycle (managed by {@code InvocationDispatcher.buildRequest}):
+&nbsp; * &lt;ol&gt;
+&nbsp; *   &lt;li&gt;Constructed with the HTTP method, base URL, and path template.&lt;/li&gt;
+&nbsp; *   &lt;li&gt;Each parameter handler calls one mutating method
+&nbsp; *       ({@code replacePath}, {@code addQueryParam}, {@code addHeader},
+&nbsp; *       {@code setBody}, {@code addFormField}, {@code overrideFullUrl}).&lt;/li&gt;
+&nbsp; *   &lt;li&gt;{@link #buildRequest()} is called once to produce the immutable request.&lt;/li&gt;
+&nbsp; * &lt;/ol&gt;
+&nbsp; */
+&nbsp;public final class RequestContext {
+&nbsp;
+&nbsp;    // ── Core request state ────────────────────────────────────────────────────
+&nbsp;
+&nbsp;    private final String httpMethod;
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Starts as {@code baseUrl + pathTemplate}.
+&nbsp;     * Can be completely replaced by {@link #overrideFullUrl(String)} when
+&nbsp;     * a method parameter is annotated with {@code @Url}.
+&nbsp;     */
+&nbsp;    private String resolvedUrl;
+&nbsp;
+<b class="fc">&nbsp;    private final List&lt;String[]&gt;        queryParams = new ArrayList&lt;&gt;();</b>
+<b class="fc">&nbsp;    private final Map&lt;String, String&gt;   headers     = new LinkedHashMap&lt;&gt;();</b>
+&nbsp;    private Object                      body;
+&nbsp;    private final ObjectMapper          objectMapper;
+&nbsp;
+&nbsp;    // ── Form-encoding state ───────────────────────────────────────────────────
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Accumulated key=value pairs for {@code @FormUrlEncoded} requests.
+&nbsp;     * Populated by calls to {@link #addFormField(String, String)}.
+&nbsp;     */
+<b class="fc">&nbsp;    private final List&lt;String[]&gt; formFields = new ArrayList&lt;&gt;();</b>
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Set to {@code true} when the method carries {@code @FormUrlEncoded}.
+&nbsp;     * Controls body serialisation in {@link #resolveBodyPublisher()}.
+&nbsp;     */
+<b class="fc">&nbsp;    private boolean formUrlEncoded = false;</b>
+&nbsp;
+&nbsp;    // ── Constructor ───────────────────────────────────────────────────────────
+&nbsp;
+&nbsp;    /**
+&nbsp;     * @param httpMethod   HTTP verb (GET, POST, …)
+&nbsp;     * @param baseUrl      client base URL, e.g. {@code https://api.example.com}
+&nbsp;     * @param pathTemplate path from the HTTP verb annotation, e.g. {@code /users/{id}}
+&nbsp;     * @param objectMapper shared mapper used to serialise JSON request bodies
+&nbsp;     */
+&nbsp;    public RequestContext(String httpMethod,
+&nbsp;                          String baseUrl,
+&nbsp;                          String pathTemplate,
+<b class="fc">&nbsp;                          ObjectMapper objectMapper) {</b>
+<b class="fc">&nbsp;        this.httpMethod   = httpMethod;</b>
+&nbsp;        // Concatenate eagerly; may be fully replaced by overrideFullUrl()
+<b class="fc">&nbsp;        this.resolvedUrl  = baseUrl + pathTemplate;</b>
+<b class="fc">&nbsp;        this.objectMapper = objectMapper;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    // ── Mutating methods called by ParameterHandlers ──────────────────────────
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Substitutes a {@code {placeholder}} in the path with an already-encoded value.
+&nbsp;     * Called by {@link io.declarative.http.handler.PathHandler}.
+&nbsp;     *
+&nbsp;     * @param placeholder placeholder token including braces, e.g. {@code {id}}
+&nbsp;     * @param value       percent-encoded replacement value
+&nbsp;     */
+&nbsp;    public void replacePath(String placeholder, String value) {
+<b class="fc">&nbsp;        resolvedUrl = resolvedUrl.replace(placeholder, value);</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Replaces the entire URL (base + path) with an absolute URL
+&nbsp;     *
+&nbsp;     * @param absoluteUrl the complete URL to use, e.g.
+&nbsp;     *                    {@code https://cdn.example.com/v2/resource/42}
+&nbsp;     */
+&nbsp;    public void overrideFullUrl(String absoluteUrl) {
+<b class="fc">&nbsp;        this.resolvedUrl = absoluteUrl;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Appends a query parameter to the request URI.
+&nbsp;     * Called by {@link io.declarative.http.handler.QueryHandler} and
+&nbsp;     * {@link io.declarative.http.handler.QueryMapHandler}.
+&nbsp;     *
+&nbsp;     * @param name  query param name (not encoded; must not be null or blank)
+&nbsp;     * @param value already percent-encoded value
+&nbsp;     * @throws RestClientException if {@code name} is null or blank
+&nbsp;     */
+&nbsp;    public void addQueryParam(String name, String value) {
+<b class="pc">&nbsp;        if (name == null || name.isBlank()) {</b>
+<b class="nc">&nbsp;            throw new RestClientException(</b>
+&nbsp;                    &quot;Query parameter name must not be null or blank&quot;);
+&nbsp;        }
+<b class="fc">&nbsp;        queryParams.add(new String[]{name, value});</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Adds a request header, overwriting any previous value for the same name.
+&nbsp;     * Called by {@link io.declarative.http.handler.HeaderHandler} and
+&nbsp;     * {@link io.declarative.http.handler.HeaderMapHandler}.
+&nbsp;     *
+&nbsp;     * @param name  header name (must not be null or blank)
+&nbsp;     * @param value header value
+&nbsp;     * @throws RestClientException if {@code name} is null or blank
+&nbsp;     */
+&nbsp;    public void addHeader(String name, String value) {
+<b class="pc">&nbsp;        if (name == null || name.isBlank()) {</b>
+<b class="nc">&nbsp;            throw new RestClientException(</b>
+&nbsp;                    &quot;Header name must not be null or blank&quot;);
+&nbsp;        }
+<b class="fc">&nbsp;        headers.put(name, value);</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Sets the object to be serialised as the JSON request body.
+&nbsp;     * Called by {@link io.declarative.http.handler.BodyHandler}.
+&nbsp;     *
+&nbsp;     * @param body any Jackson-serialisable object; {@code null} produces no body
+&nbsp;     */
+&nbsp;    public void setBody(Object body) {
+<b class="fc">&nbsp;        this.body = body;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Accumulates a single form field for {@code @FormUrlEncoded} requests.
+&nbsp;     *
+&nbsp;     *
+&nbsp;     * &lt;p&gt;The value must already be percent-encoded by the caller
+&nbsp;     * (see {@link io.declarative.http.handler.FieldHandler}).
+&nbsp;     *
+&nbsp;     * @param name         the form field name, e.g. {@code username}
+&nbsp;     * @param encodedValue the percent-encoded field value
+&nbsp;     */
+&nbsp;    public void addFormField(String name, String encodedValue) {
+<b class="pc">&nbsp;        if (name == null || name.isBlank()) {</b>
+<b class="nc">&nbsp;            throw new RestClientException(</b>
+&nbsp;                    &quot;Form field name must not be null or blank&quot;);
+&nbsp;        }
+<b class="fc">&nbsp;        formFields.add(new String[]{name, encodedValue});</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Switches the request body serialisation strategy to
+&nbsp;     * {@code application/x-www-form-urlencoded}.
+&nbsp;     *
+&nbsp;     * @param formUrlEncoded {@code true} to activate form-encoding mode
+&nbsp;     */
+&nbsp;    public void setFormUrlEncoded(boolean formUrlEncoded) {
+<b class="fc">&nbsp;        this.formUrlEncoded = formUrlEncoded;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    // ── Terminal method ───────────────────────────────────────────────────────
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Builds the final, immutable {@link HttpRequest} from all accumulated state.
+&nbsp;     *
+&nbsp;     * &lt;p&gt;Steps:
+&nbsp;     * &lt;ol&gt;
+&nbsp;     *   &lt;li&gt;Validates that no {@code {placeholder}} tokens remain unresolved.&lt;/li&gt;
+&nbsp;     *   &lt;li&gt;Appends query parameters to the URI.&lt;/li&gt;
+&nbsp;     *   &lt;li&gt;Adds a default {@code Accept: application/json} header.&lt;/li&gt;
+&nbsp;     *   &lt;li&gt;Overlays any user-supplied headers.&lt;/li&gt;
+&nbsp;     *   &lt;li&gt;Selects the appropriate body publisher (form, JSON, or empty).&lt;/li&gt;
+&nbsp;     *   &lt;li&gt;Sets the correct {@code Content-Type} header.&lt;/li&gt;
+&nbsp;     * &lt;/ol&gt;
+&nbsp;     *
+&nbsp;     * @return an immutable, ready-to-send {@link HttpRequest}
+&nbsp;     * @throws RestClientException if the URL contains unresolved path variables
+&nbsp;     *                             or the body cannot be serialised
+&nbsp;     */
+&nbsp;    public HttpRequest buildRequest() {
+<b class="fc">&nbsp;        URI uri = buildUri();</b>
+&nbsp;
+<b class="fc">&nbsp;        HttpRequest.Builder builder = HttpRequest.newBuilder(uri);</b>
+&nbsp;
+&nbsp;        // Default Accept — individual @Header params can override this
+<b class="fc">&nbsp;        builder.header(&quot;Accept&quot;, &quot;application/json&quot;);</b>
+&nbsp;
+&nbsp;        // User-supplied headers (applied after default so they can override)
+<b class="fc">&nbsp;        headers.forEach(builder::header);</b>
+&nbsp;
+&nbsp;        // Body publisher
+<b class="fc">&nbsp;        HttpRequest.BodyPublisher publisher = resolveBodyPublisher();</b>
+<b class="fc">&nbsp;        builder.method(httpMethod, publisher);</b>
+&nbsp;
+&nbsp;        // Content-Type
+<b class="fc">&nbsp;        if (formUrlEncoded) {</b>
+<b class="fc">&nbsp;            builder.header(&quot;Content-Type&quot;, &quot;application/x-www-form-urlencoded&quot;);</b>
+<b class="fc">&nbsp;        } else if (body != null) {</b>
+<b class="fc">&nbsp;            builder.header(&quot;Content-Type&quot;, &quot;application/json; charset=UTF-8&quot;);</b>
+&nbsp;        }
+&nbsp;
+<b class="fc">&nbsp;        return builder.build();</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    // ── Private helpers ───────────────────────────────────────────────────────
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Constructs the request {@link URI} from the resolved URL and any
+&nbsp;     * accumulated query parameters.
+&nbsp;     *
+&nbsp;     * @throws RestClientException if the URL still contains {@code {…}} tokens,
+&nbsp;     *                             indicating that a {@code @Path} argument was not supplied
+&nbsp;     */
+&nbsp;    private URI buildUri() {
+<b class="pc">&nbsp;        if (resolvedUrl.contains(&quot;{&quot;) &amp;&amp; resolvedUrl.contains(&quot;}&quot;)) {</b>
+<b class="nc">&nbsp;            throw new RestClientException(</b>
+&nbsp;                    &quot;Unresolved path variable in URL: &#39;&quot; + resolvedUrl + &quot;&#39;. &quot; +
+&nbsp;                            &quot;Ensure all @Path parameters are provided and non-null.&quot;);
+&nbsp;        }
+&nbsp;
+<b class="fc">&nbsp;        if (queryParams.isEmpty()) {</b>
+<b class="fc">&nbsp;            return URI.create(resolvedUrl);</b>
+&nbsp;        }
+&nbsp;
+<b class="fc">&nbsp;        StringJoiner joiner = new StringJoiner(&quot;&amp;&quot;);</b>
+<b class="fc">&nbsp;        for (String[] kv : queryParams) {</b>
+<b class="fc">&nbsp;            joiner.add(kv[0] + &quot;=&quot; + kv[1]);</b>
+&nbsp;        }
+<b class="fc">&nbsp;        return URI.create(resolvedUrl + &quot;?&quot; + joiner);</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Selects the {@link HttpRequest.BodyPublisher} based on the current mode.
+&nbsp;     *
+&nbsp;     * &lt;ul&gt;
+&nbsp;     *   &lt;li&gt;&lt;b&gt;Form-encoded:&lt;/b&gt; joins all accumulated {@link #formFields} with
+&nbsp;     *       {@code &amp;} and publishes as UTF-8 bytes.&lt;/li&gt;
+&nbsp;     *   &lt;li&gt;&lt;b&gt;JSON:&lt;/b&gt; serialises {@link #body} via Jackson.&lt;/li&gt;
+&nbsp;     *   &lt;li&gt;&lt;b&gt;Empty:&lt;/b&gt; used for GET / DELETE methods with no body.&lt;/li&gt;
+&nbsp;     * &lt;/ul&gt;
+&nbsp;     */
+&nbsp;    private HttpRequest.BodyPublisher resolveBodyPublisher() {
+&nbsp;        // ── Form-encoded body ─────────────────────────────────────────────────
+<b class="fc">&nbsp;        if (formUrlEncoded) {</b>
+<b class="pc">&nbsp;            if (formFields.isEmpty()) {</b>
+<b class="nc">&nbsp;                return HttpRequest.BodyPublishers.noBody();</b>
+&nbsp;            }
+<b class="fc">&nbsp;            StringJoiner joiner = new StringJoiner(&quot;&amp;&quot;);</b>
+<b class="fc">&nbsp;            for (String[] kv : formFields) {</b>
+<b class="fc">&nbsp;                joiner.add(kv[0] + &quot;=&quot; + kv[1]);</b>
+&nbsp;            }
+<b class="fc">&nbsp;            return HttpRequest.BodyPublishers.ofString(</b>
+<b class="fc">&nbsp;                    joiner.toString(), StandardCharsets.UTF_8);</b>
+&nbsp;        }
+&nbsp;
+<b class="fc">&nbsp;        if (body instanceof String s) {</b>
+<b class="fc">&nbsp;            return HttpRequest.BodyPublishers.ofString(s);</b>
+&nbsp;        }
+&nbsp;
+&nbsp;        // ── JSON body ─────────────────────────────────────────────────────────
+<b class="pc">&nbsp;        if (body != null) {</b>
+&nbsp;            try {
+<b class="nc">&nbsp;                byte[] json = objectMapper.writeValueAsBytes(body);</b>
+<b class="nc">&nbsp;                return HttpRequest.BodyPublishers.ofByteArray(json);</b>
+&nbsp;            } catch (Exception e) {
+<b class="nc">&nbsp;                throw new RestClientException(</b>
+<b class="nc">&nbsp;                        &quot;Failed to serialise request body to JSON: &quot; + e.getMessage(), e);</b>
+&nbsp;            }
+&nbsp;        }
+&nbsp;
+&nbsp;        // ── No body (GET, DELETE, HEAD, …) ────────────────────────────────────
+<b class="fc">&nbsp;        return HttpRequest.BodyPublishers.noBody();</b>
+&nbsp;    }
+&nbsp;}
+</code>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+      hljs.highlightAll()
+      hljs.initLineNumbersOnLoad();
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2026-04-11 01:08</div>
+</div>
+</body>
+</html>

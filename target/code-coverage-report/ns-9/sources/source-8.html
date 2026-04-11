@@ -1,0 +1,158 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <meta http-equiv="Content-Type" content="text/html;charset=UTF-8"> 
+  <title>Coverage Report > UrlHandler</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/idea.min.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.min.js"></script>
+  <script type="text/javascript" src="../../js/highlightjs-line-numbers.min.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.declarative.http.handler</a>
+</div>
+
+<h1>Coverage Summary for Class: UrlHandler (io.declarative.http.handler)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Branch, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">UrlHandler</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    50%
+  </span>
+  <span class="absValue">
+    (1/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (3/3)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<code class="sourceCode" id="sourceCode">&nbsp;package io.declarative.http.handler;
+&nbsp;
+&nbsp;import io.declarative.http.client.RequestContext;
+&nbsp;
+&nbsp;/**
+&nbsp; * Applies a {@link io.declarative.http.api.annotation.Url} parameter to the
+&nbsp; * in-progress {@link RequestContext}, replacing the entire base URL + path template
+&nbsp; * with the absolute URL supplied at call time.
+&nbsp; *
+&nbsp; * &lt;p&gt;This is useful when the full URL is determined at runtime — for example,
+&nbsp; * when following a {@code Location} header from a previous response or when
+&nbsp; * calling a dynamically discovered service endpoint.
+&nbsp; *
+&nbsp; * &lt;p&gt;&lt;b&gt;Usage:&lt;/b&gt;
+&nbsp; * &lt;pre&gt;{@code
+&nbsp; * @GET
+&nbsp; * CompletableFuture&lt;Resource&gt; fetch(@Url String absoluteUrl);
+&nbsp; *
+&nbsp; * // Called as:
+&nbsp; * api.fetch(&quot;https://cdn.example.com/v2/resources/abc&quot;).join();
+&nbsp; * }&lt;/pre&gt;
+&nbsp; *
+&nbsp; * &lt;p&gt;The HTTP verb annotation ({@code @GET}, {@code @POST}, etc.) must still be
+&nbsp; * present on the method; its {@code value()} is ignored when {@code @Url} is provided.
+&nbsp; *
+&nbsp; * &lt;pre&gt;
+&nbsp; *   RestClientException: Parameter 0 of &#39;fetch&#39; has no recognised annotation
+&nbsp; * &lt;/pre&gt;
+&nbsp; */
+<b class="fc">&nbsp;public final class UrlHandler implements ParameterHandler {</b>
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Overrides the full URL (base + path) in the request context.
+&nbsp;     * Null values are silently ignored — the original path template is preserved.
+&nbsp;     */
+&nbsp;    @Override
+&nbsp;    public void apply(RequestContext ctx, Object value) {
+<b class="pc">&nbsp;        if (value != null) {</b>
+<b class="fc">&nbsp;            ctx.overrideFullUrl(value.toString());</b>
+&nbsp;        }
+&nbsp;    }
+&nbsp;}
+</code>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+      hljs.highlightAll()
+      hljs.initLineNumbersOnLoad();
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2026-04-11 01:08</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,88 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <meta http-equiv="Content-Type" content="text/html;charset=UTF-8"> 
+  <title>Coverage Report > ParameterHandler</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/idea.min.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.min.js"></script>
+  <script type="text/javascript" src="../../js/highlightjs-line-numbers.min.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.declarative.http.handler</a>
+</div>
+
+<h1>Coverage Summary for Class: ParameterHandler (io.declarative.http.handler)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+</tr>
+<tr>
+  <td class="name">ParameterHandler</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<code class="sourceCode" id="sourceCode">&nbsp;package io.declarative.http.handler;
+&nbsp;
+&nbsp;
+&nbsp;import io.declarative.http.client.RequestContext;
+&nbsp;
+&nbsp;/**
+&nbsp; * Sealed interface representing a single parameter binding strategy.
+&nbsp; * Each implementation handles exactly one annotation type.
+&nbsp; * Instances are created ONCE per method at client creation time.
+&nbsp; */
+&nbsp;public sealed interface ParameterHandler
+&nbsp;        permits BodyHandler, FieldHandler, HeaderHandler, HeaderMapHandler, PathHandler, QueryHandler, QueryMapHandler, UrlHandler {
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Applies this handler&#39;s effect to the given request context.
+&nbsp;     * @param ctx   mutable request context accumulating URI/headers/body
+&nbsp;     * @param value the resolved runtime argument value
+&nbsp;     */
+&nbsp;    void apply(RequestContext ctx, Object value);
+&nbsp;}
+</code>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+      hljs.highlightAll()
+      hljs.initLineNumbersOnLoad();
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2026-04-11 01:08</div>
+</div>
+</body>
+</html>

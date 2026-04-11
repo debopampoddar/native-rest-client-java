@@ -1,0 +1,179 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <meta http-equiv="Content-Type" content="text/html;charset=UTF-8"> 
+  <title>Coverage Report > StringConverter</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/idea.min.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.min.js"></script>
+  <script type="text/javascript" src="../../js/highlightjs-line-numbers.min.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.declarative.http.api.converters</a>
+</div>
+
+<h1>Coverage Summary for Class: StringConverter (io.declarative.http.api.converters)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Branch, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">StringConverter</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (3/3)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    50%
+  </span>
+  <span class="absValue">
+    (1/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (3/3)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<code class="sourceCode" id="sourceCode">&nbsp;package io.declarative.http.api.converters;
+&nbsp;
+&nbsp;import com.fasterxml.jackson.databind.JavaType;
+&nbsp;
+&nbsp;import java.io.IOException;
+&nbsp;import java.io.InputStream;
+&nbsp;import java.nio.charset.StandardCharsets;
+&nbsp;
+&nbsp;/**
+&nbsp; * Converter that reads the entire response body as a UTF-8 {@link String}.
+&nbsp; *
+&nbsp; * &lt;p&gt;Handles any method whose declared return type is exactly {@code String}
+&nbsp; * (or {@code CompletableFuture&lt;String&gt;} for async methods — the generic type
+&nbsp; * is unwrapped by {@code InvocationDispatcher} before {@link #canConvert} is called).
+&nbsp; *
+&nbsp; * &lt;p&gt;No JSON parsing is performed; the raw body bytes are returned as-is.
+&nbsp; * This is useful for:
+&nbsp; * &lt;ul&gt;
+&nbsp; *   &lt;li&gt;Plain-text endpoints ({@code text/plain}, {@code text/html})&lt;/li&gt;
+&nbsp; *   &lt;li&gt;Raw JSON inspection without deserialisation&lt;/li&gt;
+&nbsp; *   &lt;li&gt;Endpoints that return non-JSON content types&lt;/li&gt;
+&nbsp; * &lt;/ul&gt;
+&nbsp; *
+&nbsp; * &lt;p&gt;This converter is registered first in the chain so it takes priority
+&nbsp; * over {@link JacksonConverter} for {@code String} return types.
+&nbsp; *
+&nbsp; * &lt;h3&gt;Example&lt;/h3&gt;
+&nbsp; * &lt;pre&gt;{@code
+&nbsp; * public interface HealthApi {
+&nbsp; *
+&nbsp; *     // Returns raw response body as a String
+&nbsp; *     @GET(&quot;/health&quot;)
+&nbsp; *     String checkHealth();
+&nbsp; *
+&nbsp; *     // Async variant — also handled by StringConverter
+&nbsp; *     @GET(&quot;/version&quot;)
+&nbsp; *     CompletableFuture&lt;String&gt; getVersion();
+&nbsp; * }
+&nbsp; * }&lt;/pre&gt;
+&nbsp; */
+<b class="fc">&nbsp;public final class StringConverter implements ResponseConverter {</b>
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Returns {@code true} only when the target type is exactly {@link String}.
+&nbsp;     */
+&nbsp;    @Override
+&nbsp;    public boolean canConvert(JavaType type) {
+<b class="pc">&nbsp;        return type.getRawClass() == String.class;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    /**
+&nbsp;     * Reads all bytes from {@code body} and decodes them as UTF-8.
+&nbsp;     *
+&nbsp;     * @param body the raw response {@link InputStream} (non-null, open)
+&nbsp;     * @param type the target type (always {@code String} when this method is called)
+&nbsp;     * @return the full response body as a UTF-8 {@link String}
+&nbsp;     * @throws IOException if reading the stream fails
+&nbsp;     */
+&nbsp;    @Override
+&nbsp;    public Object convert(InputStream body, JavaType type) throws IOException {
+<b class="fc">&nbsp;        return new String(body.readAllBytes(), StandardCharsets.UTF_8);</b>
+&nbsp;    }
+&nbsp;}
+</code>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+      hljs.highlightAll()
+      hljs.initLineNumbersOnLoad();
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2026-04-11 01:08</div>
+</div>
+</body>
+</html>

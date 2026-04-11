@@ -266,6 +266,10 @@ public final class RequestContext {
                     joiner.toString(), StandardCharsets.UTF_8);
         }
 
+        if (body instanceof String s) {
+            return HttpRequest.BodyPublishers.ofString(s);
+        }
+
         // ── JSON body ─────────────────────────────────────────────────────────
         if (body != null) {
             try {

@@ -1,0 +1,159 @@
+
+
+
+<!DOCTYPE html>
+<html id="htmlId">
+<head>
+  <meta http-equiv="Content-Type" content="text/html;charset=UTF-8"> 
+  <title>Coverage Report > TokenRefreshExchangeInterceptor</title>
+  <style type="text/css">
+    @import "../../css/coverage.css";
+    @import "../../css/idea.min.css";
+  </style>
+  <script type="text/javascript" src="../../js/highlight.min.js"></script>
+  <script type="text/javascript" src="../../js/highlightjs-line-numbers.min.js"></script>
+</head>
+
+<body>
+<div class="content">
+<div class="breadCrumbs">
+Current scope:     <a href="../../index.html">all classes</a>
+    <span class="separator">|</span>
+    <a href="../index.html">io.declarative.http.api.interceptors</a>
+</div>
+
+<h1>Coverage Summary for Class: TokenRefreshExchangeInterceptor (io.declarative.http.api.interceptors)</h1>
+
+<table class="coverageStats">
+<tr>
+  <th class="name">Class</th>
+<th class="coverageStat 
+">
+  Class, %
+</th>
+<th class="coverageStat 
+">
+  Method, %
+</th>
+<th class="coverageStat 
+">
+  Branch, %
+</th>
+<th class="coverageStat 
+">
+  Line, %
+</th>
+</tr>
+<tr>
+  <td class="name">TokenRefreshExchangeInterceptor</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (1/1)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (2/2)
+  </span>
+</td>
+<td class="coverageStat">
+  <span class="percent">
+    100%
+  </span>
+  <span class="absValue">
+    (11/11)
+  </span>
+</td>
+</tr>
+
+</table>
+
+<br/>
+<br/>
+
+
+<pre>
+<code class="sourceCode" id="sourceCode">&nbsp;package io.declarative.http.api.interceptors;
+&nbsp;
+&nbsp;import java.io.IOException;
+&nbsp;import java.net.http.HttpRequest;
+&nbsp;import java.net.http.HttpResponse;
+&nbsp;import java.util.function.Supplier;
+&nbsp;
+&nbsp;/**
+&nbsp; * On a 401 response, refresh the OAuth token and retry once transparently, then propagate failure if it still fails.
+&nbsp; */
+&nbsp;
+&nbsp;public final class TokenRefreshExchangeInterceptor implements HttpExchangeInterceptor {
+&nbsp;
+&nbsp;    private final Supplier&lt;String&gt; accessTokenSupplier;
+&nbsp;    private final Runnable refreshToken; // triggers token refresh, could be more elaborate
+&nbsp;
+&nbsp;    public TokenRefreshExchangeInterceptor(Supplier&lt;String&gt; accessTokenSupplier,
+<b class="fc">&nbsp;                                           Runnable refreshToken) {</b>
+<b class="fc">&nbsp;        this.accessTokenSupplier = accessTokenSupplier;</b>
+<b class="fc">&nbsp;        this.refreshToken = refreshToken;</b>
+&nbsp;    }
+&nbsp;
+&nbsp;    @Override
+&nbsp;    public &lt;T&gt; HttpResponse&lt;T&gt; intercept(HttpRequest request,
+&nbsp;                                         ExchangeChain&lt;T&gt; chain)
+&nbsp;            throws IOException, InterruptedException {
+&nbsp;
+&nbsp;        // First attempt, with whatever token is currently present
+<b class="fc">&nbsp;        HttpResponse&lt;T&gt; response = chain.proceed(request);</b>
+<b class="fc">&nbsp;        if (response.statusCode() != 401) {</b>
+<b class="fc">&nbsp;            return response;</b>
+&nbsp;        }
+&nbsp;
+&nbsp;        // 401: refresh token and retry once
+<b class="fc">&nbsp;        refreshToken.run();</b>
+&nbsp;
+<b class="fc">&nbsp;        HttpRequest retried = HttpRequest.newBuilder(request, (name, value) -&gt; !name.equalsIgnoreCase(&quot;Authorization&quot;))</b>
+<b class="fc">&nbsp;                .header(&quot;Authorization&quot;, &quot;Bearer &quot; + accessTokenSupplier.get())</b>
+<b class="fc">&nbsp;                .build();</b>
+&nbsp;
+<b class="fc">&nbsp;        return chain.proceed(retried);</b>
+&nbsp;    }
+&nbsp;}
+</code>
+</pre>
+</div>
+
+<script type="text/javascript">
+(function() {
+    var msie = false, msie9 = false;
+    /*@cc_on
+      msie = true;
+      @if (@_jscript_version >= 9)
+        msie9 = true;
+      @end
+    @*/
+
+    if (!msie || msie && msie9) {
+      hljs.highlightAll()
+      hljs.initLineNumbersOnLoad();
+    }
+})();
+</script>
+
+<div class="footer">
+    
+    <div style="float:right;">generated on 2026-04-11 01:08</div>
+</div>
+</body>
+</html>
