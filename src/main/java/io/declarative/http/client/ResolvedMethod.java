@@ -50,10 +50,11 @@ public final class ResolvedMethod {
     private final boolean isAsync;
     private final List<String[]> staticHeaders;   // from @Headers
     private final boolean formUrlEncoded;          // from @FormUrlEncoded
+    private final boolean wrapInEnvelope;
 
     private ResolvedMethod(String httpMethod, String pathTemplate, List<ParameterHandler> handlers,
                            JavaType responseType, boolean isAsync, List<String[]> staticHeaders,
-                           boolean formUrlEncoded) {
+                           boolean formUrlEncoded, boolean wrapInEnvelope) {
         this.httpMethod = httpMethod;
         this.pathTemplate = pathTemplate;
         this.handlers = Collections.unmodifiableList(handlers);
@@ -61,6 +62,7 @@ public final class ResolvedMethod {
         this.isAsync = isAsync;
         this.staticHeaders = Collections.unmodifiableList(staticHeaders);
         this.formUrlEncoded = formUrlEncoded;
+        this.wrapInEnvelope = wrapInEnvelope;
     }
 
 
@@ -90,6 +92,10 @@ public final class ResolvedMethod {
 
     public boolean isFormUrlEncoded() {
         return formUrlEncoded;
+    }
+
+    public boolean wrapInEnvelope() {
+        return wrapInEnvelope;
     }
 
 
@@ -141,17 +147,25 @@ public final class ResolvedMethod {
         }
 
         // Return type
+        boolean wrap = false;
         TypeFactory tf = objectMapper.getTypeFactory();
         boolean async = method.getReturnType() == CompletableFuture.class;
         JavaType responseType;
-        if (async) {
-            Type actual = ((ParameterizedType) method.getGenericReturnType()).getActualTypeArguments()[0];
-            responseType = tf.constructType(actual);
+
+        Type declared = async
+                ? ((ParameterizedType) method.getGenericReturnType()).getActualTypeArguments()[0]
+                : method.getGenericReturnType();
+
+        JavaType declaredType = tf.constructType(declared);
+        if (declaredType.getRawClass() == HttpResponseEnvelope.class) {
+            wrap = true;
+            JavaType inner = declaredType.containedTypeOrUnknown(0);
+            responseType = inner;
         } else {
-            responseType = tf.constructType(method.getGenericReturnType());
+            responseType = declaredType;
         }
 
-        return new ResolvedMethod(httpVerb, path, handlers, responseType, async, staticHdrs, isForm);
+        return new ResolvedMethod(httpVerb, path, handlers, responseType, async, staticHdrs, isForm, wrap);
     }
 
     private static ParameterHandler resolveHandler(Method method, int index, Annotation[] annotations, boolean isForm) {

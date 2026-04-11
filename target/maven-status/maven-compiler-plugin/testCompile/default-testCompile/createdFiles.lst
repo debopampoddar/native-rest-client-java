@@ -1,0 +1,8 @@
+io/declarative/http/api/auth/AuthIntegrationApi.class
+io/declarative/http/api/auth/FakeTokenManager.class
+io/declarative/http/client/NativeRestClientTest$TestApi.class
+io/declarative/http/client/NativeRestClientTest.class
+io/declarative/http/api/auth/AuthInterceptorsIntegrationTest.class
+io/declarative/http/api/auth/AuthInterceptorsIntegrationTest$AuthApi.class
+io/declarative/http/client/NativeRestClientTest$1NullApi.class
+io/declarative/http/client/NativeRestClientTest$1EmptyApi.class

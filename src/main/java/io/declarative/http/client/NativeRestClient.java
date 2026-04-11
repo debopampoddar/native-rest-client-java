@@ -2,7 +2,11 @@ package io.declarative.http.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import io.declarative.http.api.converters.JacksonConverter;
+import io.declarative.http.api.converters.ResponseConverter;
+import io.declarative.http.api.converters.StringConverter;
 import io.declarative.http.api.interceptors.ClientInterceptor;
+import io.declarative.http.api.interceptors.HttpExchangeInterceptor;
 
 import java.lang.reflect.Method;
 import java.net.http.HttpClient;
@@ -12,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 
 /**
  * Entry point: builds type-safe HTTP client proxies from annotated interfaces.
@@ -61,12 +66,24 @@ public final class NativeRestClient {
         private HttpClient httpClient;
         private ObjectMapper objectMapper;
         private final List<ClientInterceptor> interceptors = new ArrayList<>();
+        private final List<ResponseConverter> converters = new ArrayList<>();
+        private Executor executor; // optional
+        private final List<HttpExchangeInterceptor> exchangeInterceptors = new ArrayList<>();
+
+        public Builder executor(Executor executor) {
+            this.executor = Objects.requireNonNull(executor, "executor");
+            return this;
+        }
 
         private Builder(String baseUrl) {
             Objects.requireNonNull(baseUrl, "baseUrl must not be null");
             this.baseUrl = baseUrl.endsWith("/")
                     ? baseUrl.substring(0, baseUrl.length() - 1)
                     : baseUrl;
+
+            // Default converters in priority order
+            converters.add(new StringConverter());
+            // JacksonConverter will be added in build() once we know the final ObjectMapper
         }
 
         public Builder httpClient(HttpClient httpClient) {
@@ -88,6 +105,29 @@ public final class NativeRestClient {
             return this;
         }
 
+        /**
+         * Registers an additional response converter (e.g. XML, Protobuf).
+         * Converters are consulted in registration order before Jackson.
+         */
+        public Builder addConverter(ResponseConverter converter) {
+            converters.add(Objects.requireNonNull(converter, "converter"));
+            return this;
+        }
+
+        public Builder addExchangeInterceptor(HttpExchangeInterceptor interceptor) {
+            this.exchangeInterceptors.add(Objects.requireNonNull(interceptor));
+            return this;
+        }
+
+        private HttpClient buildDefaultClient() {
+            HttpClient.Builder builder = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10));
+            if (executor != null) {
+                builder.executor(executor);
+            }
+            return builder.build();
+        }
+
         public NativeRestClient build() {
             ObjectMapper om = (objectMapper != null)
                     ? objectMapper
@@ -95,12 +135,15 @@ public final class NativeRestClient {
 
             HttpClient client = (httpClient != null)
                     ? httpClient
-                    : HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .build();
+                    : buildDefaultClient();
 
-            return new NativeRestClient(
-                    new InvocationDispatcher(client, baseUrl, om, interceptors));
+            List<ResponseConverter> finalConverters = new ArrayList<>(converters);
+            finalConverters.add(new JacksonConverter(om)); // last in chain
+
+            InvocationDispatcher dispatcher = new InvocationDispatcher(
+                    client, baseUrl, om, interceptors, finalConverters, exchangeInterceptors);
+
+            return new NativeRestClient(dispatcher);
         }
     }
 }
