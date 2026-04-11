@@ -83,7 +83,7 @@ public final class JacksonConverter implements ResponseConverter {
     }
 
     /**
-     * Deserialises the JSON response body into the specified Java type.
+     * Deserializes the JSON response body into the specified Java type.
      *
      * <p>Delegates directly to {@link ObjectMapper#readValue(InputStream, JavaType)},
      * which correctly handles:

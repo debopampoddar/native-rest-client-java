@@ -47,7 +47,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class NativeRestClientTest {
+public class NativeRestClientTest {
 
     private static WireMockServer wm;
     private NativeRestClient client;
