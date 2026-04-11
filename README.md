@@ -1,5 +1,16 @@
 # Native REST Client for Java
 
+> Copyright (C) 2024–2026  Debopam Poddar
+> 
+> This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, version 3.
+>
+> This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
 A lightweight, minimal-dependency declarative HTTP client built exclusively for Java 21+.
 
 Designed as a modern, native alternative to Retrofit and Feign, this library allows you to
@@ -610,4 +621,5 @@ network required.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+This project is licensed under the GNU General Public License version 3 (GPLv3).
+See the [LICENSE](./LICENSE) file for details.
