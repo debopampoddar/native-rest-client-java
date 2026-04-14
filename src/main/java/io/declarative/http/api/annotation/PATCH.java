@@ -1,19 +1,22 @@
 package io.declarative.http.api.annotation;
-
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import java.lang.annotation.*;
 
 /**
- * Indicates that the annotated method represents an HTTP PATCH request.
+ * Declares that the annotated service interface method performs an HTTP PATCH request.
  *
- * @author Debopam
+ * <h2>Usage</h2>
+ * <pre>{@code
+ * @PATCH("/users/{id}")
+ * User patchUser(@Path("id") long id, @Body Map<String, Object> fields);
+ * }</pre>
+ *
+ * @see PUT
+ * @see Body
  */
+@Documented
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
-@Documented
 public @interface PATCH {
+    /** The relative URL path for this PATCH request. @return the relative path */
     String value() default "";
 }

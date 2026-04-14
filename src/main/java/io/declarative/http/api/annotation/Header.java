@@ -1,31 +1,22 @@
 package io.declarative.http.api.annotation;
-
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import java.lang.annotation.*;
 
 /**
- * Adds a dynamic request header to an API method.
- * <p>
- * The value of the annotated parameter will be used as the header's value.
+ * Adds a single HTTP request header whose value is supplied at call time.
  *
- * <pre><code>
- * {@literal @}GET("/api/data")
- * void getData(@Header("Authorization") String token);
- * </code></pre>
+ * <p>If the value is {@code null}, the header is silently omitted. Use
+ * {@link Headers @Headers} for static, compile-time headers.
  *
- * @author Debopam
+ * <h2>Usage</h2>
+ * <pre>{@code
+ * @GET("/data")
+ * Data getData(@Header("X-Correlation-Id") String correlationId);
+ * }</pre>
  */
-@Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.PARAMETER)
 @Documented
+@Target(ElementType.PARAMETER)
+@Retention(RetentionPolicy.RUNTIME)
 public @interface Header {
-    /**
-     * The name of the HTTP header.
-     *
-     * @return the header name
-     */
+    /** The HTTP header name, e.g. {@code "X-Correlation-Id"}. */
     String value();
 }

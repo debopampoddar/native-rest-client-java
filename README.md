@@ -152,11 +152,18 @@ NativeRestClient client = NativeRestClient.builder("https://api.example.com")
 
 ---
 
+## Architecture & Execution Flow
+
+To see the internal components and how requests are constructed and executed, refer to [EXECUTION_FLOW.md](EXECUTION_FLOW.md).
+
+---
+
 ## Interceptor Pipeline
 
 When a proxy method is invoked, requests flow through two sequential stages before reaching
+`HttpClient.send(..)`:
+
 ```
-HttpClient.send(..)`:
 Method call
 │
 ▼

@@ -3,35 +3,41 @@ package io.declarative.http.handler;
 import io.declarative.http.client.RequestContext;
 
 /**
- * Applies a {@link io.declarative.http.api.annotation.Url} parameter to the
- * in-progress {@link RequestContext}, replacing the entire base URL + path template
- * with the absolute URL supplied at call time.
+ * Binds a method parameter annotated with
+ * {@link io.declarative.http.api.annotation.Url @Url} to the full request URL,
+ * completely replacing the configured base URL and path template.
  *
- * <p>This is useful when the full URL is determined at runtime — for example,
- * when following a {@code Location} header from a previous response or when
- * calling a dynamically discovered service endpoint.
+ * <p>This is useful when the target URL is determined at runtime — for example
+ * when following a {@code Location} header from a redirect, calling a
+ * dynamically discovered microservice endpoint, or invoking a pre-signed URL.
  *
- * <p><b>Usage:</b>
+ * <h2>Usage</h2>
  * <pre>{@code
- * @GET
- * CompletableFuture<Resource> fetch(@Url String absoluteUrl);
+ * public interface FileApi {
+ *     @GET
+ *     byte[] download(@Url String absoluteUrl);
+ * }
  *
- * // Called as:
- * api.fetch("https://cdn.example.com/v2/resources/abc").join();
+ * // The base URL is ignored; the supplied URL is used directly:
+ * fileApi.download("https://cdn.example.com/files/report-2024.pdf");
  * }</pre>
  *
- * <p>The HTTP verb annotation ({@code @GET}, {@code @POST}, etc.) must still be
- * present on the method; its {@code value()} is ignored when {@code @Url} is provided.
+ * <p>The HTTP verb annotation ({@code @GET}, {@code @POST}, etc.) must still be present
+ * on the method; its {@code value()} path is ignored when {@code @Url} is in use.
  *
- * <pre>
- *   RestClientException: Parameter 0 of 'fetch' has no recognised annotation
- * </pre>
+ * <p><b>Null handling:</b> a {@code null} argument is silently ignored and the
+ * original base URL + path template is preserved.
+ *
+ * @see io.declarative.http.api.annotation.Url
+ * @see RequestContext#overrideFullUrl(String)
  */
 public final class UrlHandler implements ParameterHandler {
 
     /**
-     * Overrides the full URL (base + path) in the request context.
-     * Null values are silently ignored — the original path template is preserved.
+     * Overrides the full request URL in the context with the supplied absolute URL.
+     *
+     * @param ctx   the mutable request context
+     * @param value the absolute URL string to use; {@code null} is silently ignored
      */
     @Override
     public void apply(RequestContext ctx, Object value) {

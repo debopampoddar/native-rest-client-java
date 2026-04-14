@@ -7,18 +7,35 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Indicates that the annotated method represents an HTTP GET request.
+ * Declares that the annotated service interface method performs an HTTP GET request.
  *
- * @author Debopam
+ * <p>The {@link #value()} attribute specifies the relative path to be appended to the
+ * client's base URL. Path variables enclosed in curly braces (e.g. {@code {id}}) are
+ * resolved at call time from {@link Path @Path}-annotated parameters.
+ *
+ * <h2>Usage</h2>
+ * <pre>{@code
+ * @GET("/users/{id}")
+ * User getUser(@Path("id") long id);
+ *
+ * @GET("/users")
+ * List<User> listUsers(@Query("page") int page, @Query("size") int size);
+ * }</pre>
+ *
+ * @see POST
+ * @see PUT
+ * @see DELETE
+ * @see PATCH
  */
-@Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.METHOD)
 @Documented
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
 public @interface GET {
     /**
-     * The relative URL path for the GET request.
+     * The relative URL path for this GET request.
+     * May contain {@code {placeholder}} tokens resolved from {@link Path @Path} parameters.
      *
-     * @return the endpoint path
+     * @return the relative path; defaults to an empty string
      */
     String value() default "";
 }

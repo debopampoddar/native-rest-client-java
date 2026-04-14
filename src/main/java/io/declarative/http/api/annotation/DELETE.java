@@ -1,24 +1,25 @@
 package io.declarative.http.api.annotation;
-
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import java.lang.annotation.*;
 
 /**
- * Indicates that the annotated method represents an HTTP DELETE request.
+ * Declares that the annotated service interface method performs an HTTP DELETE request.
  *
- * @author Debopam
+ * <h2>Usage</h2>
+ * <pre>{@code
+ * @DELETE("/users/{id}")
+ * void deleteUser(@Path("id") long id);
+ *
+ * // With envelope to inspect the status code:
+ * @DELETE("/users/{id}")
+ * HttpResponseEnvelope<Void> deleteUser(@Path("id") long id);
+ * }</pre>
+ *
+ * @see GET
  */
-@Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.METHOD)
 @Documented
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
 public @interface DELETE {
-    /**
-     * The relative URL path for the DELETE request.
-     *
-     * @return the endpoint path
-     */
+    /** The relative URL path for this DELETE request. @return the relative path */
     String value() default "";
 }
