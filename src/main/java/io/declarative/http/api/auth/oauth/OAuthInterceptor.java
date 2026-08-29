@@ -34,7 +34,7 @@ public final class OAuthInterceptor implements ClientInterceptor {
             return chain.proceed(request);
         }
         HttpRequest authed = HttpRequest.newBuilder(request, (k, v) -> true)
-                .header("Authorization", tokenType + " " + token)
+                .setHeader("Authorization", tokenType + " " + token)
                 .build();
         return chain.proceed(authed);
     }

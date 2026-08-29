@@ -39,7 +39,8 @@ public record QueryMapHandler(boolean encoded) implements ParameterHandler {
         map.forEach((k, v) -> {
             if (v == null) return;
             String key = encoded ? String.valueOf(k)
-                    : URLEncoder.encode(String.valueOf(k), StandardCharsets.UTF_8);
+                    : URLEncoder.encode(String.valueOf(k), StandardCharsets.UTF_8)
+                    .replace("+", "%20");
             String val = encoded ? String.valueOf(v)
                     : URLEncoder.encode(String.valueOf(v), StandardCharsets.UTF_8)
                       .replace("+", "%20");

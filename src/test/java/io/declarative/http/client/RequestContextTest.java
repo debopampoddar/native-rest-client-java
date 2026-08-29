@@ -3,6 +3,7 @@ package io.declarative.http.client;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.declarative.http.error.RestClientException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 
 import java.net.http.HttpRequest;
 
@@ -17,6 +18,7 @@ class RequestContextTest {
     }
 
     @Test
+    @DisplayName("Build request throws when path variables not resolved")
     void buildRequest_throwsWhenPathVariablesNotResolved() {
         RequestContext ctx = newContext("/users/{id}");
         // no replacePath call
@@ -27,6 +29,7 @@ class RequestContextTest {
     }
 
     @Test
+    @DisplayName("Add query param blank name throws rest client exception")
     void addQueryParam_blankName_throwsRestClientException() {
         RequestContext ctx = newContext("/users");
         assertThatThrownBy(() -> ctx.addQueryParam(" ", "value"))
@@ -35,6 +38,7 @@ class RequestContextTest {
     }
 
     @Test
+    @DisplayName("Add header blank name throws rest client exception")
     void addHeader_blankName_throwsRestClientException() {
         RequestContext ctx = newContext("/users");
         assertThatThrownBy(() -> ctx.addHeader("", "v"))
@@ -43,6 +47,7 @@ class RequestContextTest {
     }
 
     @Test
+    @DisplayName("Add form field blank name throws rest client exception")
     void addFormField_blankName_throwsRestClientException() {
         RequestContext ctx = newContext("/login");
         assertThatThrownBy(() -> ctx.addFormField(" ", "v"))
@@ -51,6 +56,7 @@ class RequestContextTest {
     }
 
     @Test
+    @DisplayName("Form url encoded with fields builds request with encoded body and header")
     void formUrlEncoded_withFields_buildsRequestWithEncodedBodyAndHeader() {
         RequestContext ctx = new RequestContext(
                 "POST", "http://localhost", "/login", new ObjectMapper());
@@ -67,6 +73,7 @@ class RequestContextTest {
     }
 
     @Test
+    @DisplayName("Json body string bypasses jackson and uses raw value")
     void jsonBody_stringBypassesJacksonAndUsesRawValue() {
         RequestContext ctx = new RequestContext(
                 "POST", "http://localhost", "/echo", new ObjectMapper());
@@ -79,5 +86,25 @@ class RequestContextTest {
                 .contains("application/json"));
         // Body content itself is validated indirectly in NativeRestClient tests,
         // but this at least exercises the String body publisher branch.
+    }
+
+    @Test
+    @DisplayName("Build request merges existing query before fragment")
+    void buildRequest_mergesExistingQueryBeforeFragment() {
+        RequestContext ctx = newContext("/search?existing=one#section");
+        ctx.addQueryParam("added", "two%20words");
+
+        assertThat(ctx.buildRequest().uri().toString())
+                .isEqualTo("http://localhost/search?existing=one&added=two%20words#section");
+    }
+
+    @Test
+    @DisplayName("Caller headers replace defaults case insensitively")
+    void callerHeaders_replaceDefaultsCaseInsensitively() {
+        RequestContext ctx = newContext("/items");
+        ctx.addHeader("accept", "text/plain");
+
+        assertThat(ctx.buildRequest().headers().allValues("Accept"))
+                .containsExactly("text/plain");
     }
 }

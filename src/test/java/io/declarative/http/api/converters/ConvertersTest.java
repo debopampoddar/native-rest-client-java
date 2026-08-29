@@ -3,6 +3,7 @@ package io.declarative.http.api.converters;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -15,6 +16,7 @@ public class ConvertersTest {
     record Foo(String name) {}
 
     @Test
+    @DisplayName("String converter can convert only string")
     void stringConverter_canConvertOnlyString() {
         StringConverter converter = new StringConverter();
         ObjectMapper mapper = new ObjectMapper();
@@ -26,6 +28,7 @@ public class ConvertersTest {
     }
 
     @Test
+    @DisplayName("String converter reads utf8 body")
     void stringConverter_readsUtf8Body() throws Exception {
         StringConverter converter = new StringConverter();
         String body = "héllo\nworld";
@@ -38,6 +41,7 @@ public class ConvertersTest {
     }
 
     @Test
+    @DisplayName("Jackson converter can convert all but string and input stream")
     void jacksonConverter_canConvertAllButStringAndInputStream() {
         ObjectMapper mapper = new ObjectMapper();
         JacksonConverter converter = new JacksonConverter(mapper);
@@ -54,6 +58,7 @@ public class ConvertersTest {
     }
 
     @Test
+    @DisplayName("Jackson converter deserialises json to pojo")
     void jacksonConverter_deserialisesJsonToPojo() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         JacksonConverter converter = new JacksonConverter(mapper);

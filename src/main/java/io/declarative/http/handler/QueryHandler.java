@@ -51,9 +51,12 @@ public record QueryHandler(String name, boolean encoded) implements ParameterHan
      * @param raw the raw (unencoded) string value to append
      */
     private void addSingle(RequestContext ctx, String raw) {
+        String nameToAppend = this.encoded
+                ? name
+                : URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20");
         String valueToAppend = this.encoded
                 ? raw
                 : URLEncoder.encode(raw, StandardCharsets.UTF_8).replace("+", "%20");
-        ctx.addQueryParam(name, valueToAppend);
+        ctx.addQueryParam(nameToAppend, valueToAppend);
     }
 }

@@ -33,7 +33,7 @@ public final class BearerAuthInterceptor implements ClientInterceptor {
         }
 
         HttpRequest authenticated = HttpRequest.newBuilder(request, (k, v) -> true)
-                .header("Authorization", "Bearer " + token)
+                .setHeader("Authorization", "Bearer " + token)
                 .build();
         return chain.proceed(authenticated);
     }

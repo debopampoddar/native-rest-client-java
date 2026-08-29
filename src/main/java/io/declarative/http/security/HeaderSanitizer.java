@@ -1,5 +1,7 @@
 package io.declarative.http.security;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpHeaders;
 import java.util.List;
 import java.util.Map;
@@ -34,5 +36,21 @@ public final class HeaderSanitizer {
                                 ? List.of("[REDACTED]")
                                 : e.getValue()
                 ));
+    }
+
+    /**
+     * Returns a URI representation safe for logs by removing user info, query,
+     * and fragment components.
+     *
+     * @param uri URI that may contain sensitive user info, query parameters, or fragments
+     * @return a scheme/host/path representation suitable for diagnostics
+     */
+    public static String sanitize(URI uri) {
+        try {
+            return new URI(uri.getScheme(), null, uri.getHost(), uri.getPort(),
+                    uri.getPath(), null, null).toString();
+        } catch (URISyntaxException | IllegalArgumentException e) {
+            return uri.getPath() == null ? "" : uri.getPath();
+        }
     }
 }

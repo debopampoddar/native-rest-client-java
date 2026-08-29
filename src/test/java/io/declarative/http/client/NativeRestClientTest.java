@@ -24,6 +24,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 
 import java.io.IOException;
 import java.net.http.HttpRequest;
@@ -134,36 +135,42 @@ public class NativeRestClientTest {
     }
 
     @Test
+    @DisplayName("Get with path param returns body")
     void get_withPathParam_returnsBody() {
         wm.stubFor(get("/users/42").willReturn(okJson("{\"id\":42}")));
         assertThat(client.create(TestApi.class).getUser(42)).contains("42");
     }
 
     @Test
+    @DisplayName("Get with query params sends correct url")
     void get_withQueryParams_sendsCorrectUrl() {
         wm.stubFor(get(urlPathEqualTo("/search")).withQueryParam("q", equalTo("java")).withQueryParam("page", equalTo("1")).willReturn(ok("results")));
         assertThat(client.create(TestApi.class).search("java", 1)).isEqualTo("results");
     }
 
     @Test
+    @DisplayName("Get with query map sends all params")
     void get_withQueryMap_sendsAllParams() {
         wm.stubFor(get(urlPathEqualTo("/filter")).withQueryParam("status", equalTo("active")).withQueryParam("role", equalTo("admin")).willReturn(ok("filtered")));
         assertThat(client.create(TestApi.class).filter(Map.of("status", "active", "role", "admin"))).isEqualTo("filtered");
     }
 
     @Test
+    @DisplayName("Get with header map sends all headers")
     void get_withHeaderMap_sendsAllHeaders() {
         wm.stubFor(get("/data").withHeader("X-Trace-Id", equalTo("abc123")).willReturn(ok("ok")));
         assertThat(client.create(TestApi.class).dataWithHeaders(Map.of("X-Trace-Id", "abc123"))).isEqualTo("ok");
     }
 
     @Test
+    @DisplayName("Post with body sends json")
     void post_withBody_sendsJson() {
         wm.stubFor(post("/users").withHeader("Content-Type", containing("application/json")).willReturn(ok("created")));
         assertThat(client.create(TestApi.class).createUser("{\"name\":\"Alice\"}")).isEqualTo("created");
     }
 
     @Test
+    @DisplayName("Async returns completable future")
     void async_returnsCompletableFuture() {
         wm.stubFor(get("/users/99").willReturn(okJson("{\"id\":99}")));
         String result = client.create(TestApi.class).getUserAsync(99).join();
@@ -171,6 +178,7 @@ public class NativeRestClientTest {
     }
 
     @Test
+    @DisplayName("Dynamic url overrides base url and path")
     void dynamicUrl_overridesBaseUrlAndPath() {
         wm.stubFor(get("/external/resource").willReturn(ok("dynamic")));
         String url = "http://localhost:" + wm.port() + "/external/resource";
@@ -178,12 +186,14 @@ public class NativeRestClientTest {
     }
 
     @Test
+    @DisplayName("Form url encoded sends form body")
     void formUrlEncoded_sendsFormBody() {
         wm.stubFor(post("/login").withHeader("Content-Type", equalTo("application/x-www-form-urlencoded")).withRequestBody(containing("username=alice")).withRequestBody(containing("password=secret")).willReturn(ok("token=abc")));
         assertThat(client.create(TestApi.class).login("alice", "secret")).isEqualTo("token=abc");
     }
 
     @Test
+    @DisplayName("Get 404 throws api exception")
     void get_404_throwsApiException() {
         wm.stubFor(get("/users/999").willReturn(notFound().withBody("Not found")));
         assertThatThrownBy(() -> client.create(TestApi.class).getUser(999)).isInstanceOf(ApiException.class).satisfies(ex -> {
@@ -195,6 +205,7 @@ public class NativeRestClientTest {
     }
 
     @Test
+    @DisplayName("Get 500 throws api exception is server error")
     void get_500_throwsApiException_isServerError() {
         wm.stubFor(get("/users/0").willReturn(aResponse().withStatus(500).withBody("Internal error")));
         assertThatThrownBy(() -> client.create(TestApi.class).getUser(0)).isInstanceOf(ApiException.class).satisfies(ex -> {
@@ -205,6 +216,7 @@ public class NativeRestClientTest {
     }
 
     @Test
+    @DisplayName("Null path param throws illegal argument exception")
     void nullPathParam_throwsIllegalArgumentException() {
         assertThatThrownBy(() -> {
             interface NullApi {
@@ -216,6 +228,7 @@ public class NativeRestClientTest {
     }
 
     @Test
+    @DisplayName("Empty interface throws rest client exception")
     void emptyInterface_throwsRestClientException() {
         interface EmptyApi {
         }
@@ -223,6 +236,7 @@ public class NativeRestClientTest {
     }
 
     @Test
+    @DisplayName("Put with body sends correct method and body")
     void put_withBody_sendsCorrectMethodAndBody() {
         wm.stubFor(put("/users/10")
                 .withRequestBody(equalToJson("{\"name\":\"Bob\"}"))   // tolerant of whitespace
@@ -234,12 +248,14 @@ public class NativeRestClientTest {
 // ── @DELETE ───────────────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Delete void no exception on204")
     void delete_void_noExceptionOn204() {
         wm.stubFor(delete("/users/5").willReturn(aResponse().withStatus(204)));
         client.create(VoidApi.class).delete(5); // must not throw
     }
 
     @Test
+    @DisplayName("Delete void throws api exception on404")
     void delete_void_throwsApiExceptionOn404() {
         wm.stubFor(delete("/users/999").willReturn(notFound().withBody("missing")));
         assertThatThrownBy(() -> client.create(VoidApi.class).delete(999))
@@ -250,6 +266,7 @@ public class NativeRestClientTest {
 // ── @PATCH ────────────────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Patch sends correct method")
     void patch_sendsCorrectMethod() {
         wm.stubFor(patch(urlPathEqualTo("/users/7"))
                 .withRequestBody(containing("admin"))
@@ -261,6 +278,7 @@ public class NativeRestClientTest {
 // ── @Header ───────────────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Header annotation injects header value")
     void header_annotation_injectsHeaderValue() {
         wm.stubFor(get("/items")
                 .withHeader("X-Custom", equalTo("my-value"))
@@ -272,6 +290,7 @@ public class NativeRestClientTest {
 // ── @Headers (static) ─────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Static headers annotation sends all declared headers")
     void staticHeaders_annotation_sendsAllDeclaredHeaders() {
         wm.stubFor(get("/items")
                 .withHeader("Accept", equalTo("application/json"))
@@ -284,6 +303,7 @@ public class NativeRestClientTest {
 // ── HttpResponseEnvelope ──────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Envelope success returns status body and headers")
     void envelope_success_returnsStatusBodyAndHeaders() {
         wm.stubFor(get("/users/1")
                 .willReturn(aResponse().withStatus(200).withBody("alice").withHeader("X-Id", "1")));
@@ -295,23 +315,30 @@ public class NativeRestClientTest {
     }
 
     @Test
+    @DisplayName("Envelope not found returns envelope with status404 no api exception")
     void envelope_notFound_returnsEnvelopeWithStatus404_noApiException() {
         wm.stubFor(get("/users/99").willReturn(aResponse().withStatus(404).withBody("not found")));
         HttpResponseEnvelope<String> env = client.create(EnvelopeApi.class).getUserEnvelope(99L);
         assertThat(env.status()).isEqualTo(404);
         assertThat(env.isSuccessful()).isFalse();
+        assertThat(env.body()).isNull();
+        assertThat(env.errorBody()).isEqualTo("not found");
         // No ApiException thrown — caller decides how to handle the error
     }
 
     @Test
+    @DisplayName("Envelope server error returns envelope with status500 no api exception")
     void envelope_serverError_returnsEnvelopeWithStatus500_noApiException() {
         wm.stubFor(get("/users/0").willReturn(aResponse().withStatus(500).withBody("error")));
         HttpResponseEnvelope<String> env = client.create(EnvelopeApi.class).getUserEnvelope(0L);
         assertThat(env.status()).isEqualTo(500);
         assertThat(env.isSuccessful()).isFalse();
+        assertThat(env.body()).isNull();
+        assertThat(env.errorBody()).isEqualTo("error");
     }
 
     @Test
+    @DisplayName("Envelope no content returns null body")
     void envelope_noContent_returnsNullBody() {
         wm.stubFor(get("/ping").willReturn(aResponse().withStatus(204)));
         HttpResponseEnvelope<String> env = client.create(EnvelopeApi.class).pingEnvelope();
@@ -322,6 +349,7 @@ public class NativeRestClientTest {
 // ── void return ───────────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Void get 200 no exception")
     void voidGet_200_noException() {
         wm.stubFor(get("/ping").willReturn(ok()));
         client.create(VoidApi.class).ping(); // must not throw
@@ -330,6 +358,7 @@ public class NativeRestClientTest {
 // ── Exchange interceptor ──────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Exchange interceptor is invoked")
     void exchangeInterceptor_isInvoked() {
         wm.stubFor(get("/users/1").willReturn(ok("body")));
         java.util.concurrent.atomic.AtomicBoolean invoked =
@@ -348,6 +377,7 @@ public class NativeRestClientTest {
     }
 
     @Test
+    @DisplayName("Exchange interceptors executed in registration order")
     void exchangeInterceptors_executedInRegistrationOrder() {
         wm.stubFor(get("/users/1").willReturn(ok("body")));
         java.util.List<String> order = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -372,6 +402,7 @@ public class NativeRestClientTest {
     }
 
     @Test
+    @DisplayName("Exchange interceptor can modify request")
     void exchangeInterceptor_canModifyRequest() {
         wm.stubFor(get("/users/1").withHeader("X-Injected", equalTo("yes")).willReturn(ok("ok")));
         NativeRestClient c = NativeRestClient.builder("http://localhost:" + wm.port())
@@ -390,6 +421,7 @@ public class NativeRestClientTest {
 // ── Builder: executor ─────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Builder custom executor used for http client")
     void builder_customExecutor_usedForHttpClient() {
         wm.stubFor(get("/users/1").willReturn(ok("ok")));
         NativeRestClient c = NativeRestClient.builder("http://localhost:" + wm.port())

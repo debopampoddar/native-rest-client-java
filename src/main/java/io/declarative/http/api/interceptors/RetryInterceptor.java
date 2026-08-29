@@ -6,6 +6,11 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.http.HttpRequest;
 
+/**
+ * @deprecated Request interceptors do not execute the HTTP exchange and therefore
+ * cannot reliably retry network failures. Use {@link RetryOnServerErrorInterceptor}.
+ */
+@Deprecated(forRemoval = true)
 public final class RetryInterceptor implements ClientInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(RetryInterceptor.class);

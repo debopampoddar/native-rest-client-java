@@ -11,7 +11,7 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
-A lightweight, minimal-dependency declarative HTTP client built exclusively for Java 21+.
+A lightweight, near-zero-dependency declarative HTTP client for Java 21+.
 
 Designed as a modern, native alternative to Retrofit and Feign, this library allows you to
 translate REST APIs into Java interfaces using annotations. By stripping away third-party
@@ -21,6 +21,39 @@ and is fully compatible with virtual threads.
 
 Whether you are building microservices or desktop applications, this library provides a clean,
 familiar developer experience fully optimised for modern Java.
+
+It is a good fit when you want typed, annotation-driven HTTP calls without adopting
+a transport stack such as OkHttp or a large application framework. The JDK handles
+transport; this library handles the service interface, request construction,
+serialization, response conversion, and opt-in policies.
+
+Examples use normal imports from `io.declarative.http.*` and standard JDK types;
+imports are omitted where they would obscure the request/client relationship.
+
+## Start here
+
+The shortest path from interface to HTTP call is:
+
+1. Add the Maven dependency and define an annotated interface.
+2. Build one reusable `NativeRestClient` for the target API.
+3. Create a typed proxy and call it synchronously or through `CompletableFuture`.
+4. Add only the policies you need: authentication, retry, metrics, or logging.
+5. Close a client that owns its `HttpClient` when its application component stops.
+
+If you are new to the library, read **Quick Start**, then choose the return style in
+**Response Envelopes** and add **OAuth 2.0** only when the API requires it.
+
+### Choose your path
+
+| If you need to… | Start here |
+|---|---|
+| Call JSON endpoints from a typed interface | [Quick Start](#quick-start) |
+| Add request IDs, idempotency keys, or a one-off timeout | [Request options](#request-options) |
+| Inspect a 404/422 response instead of throwing | [Response envelopes](#response-envelopes) |
+| Turn API errors into domain exceptions | [Error handling](#error-handling) |
+| Send login forms or upload files | [Form URL encoded requests](#form-url-encoded-requests) and [Multipart requests](#multipart-requests) |
+| Authenticate service-to-service calls | [OAuth 2.0 client credentials](#oauth-20-client-credentials) |
+| Retry safely after temporary failures | [RetryOnServerErrorInterceptor](#retryonservererrorinterceptor) |
 
 ---
 
@@ -32,7 +65,8 @@ familiar developer experience fully optimised for modern Java.
 - **Declarative API Interfaces**
   Define your HTTP API as annotated Java interfaces:
   `@GET`, `@POST`, `@PUT`, `@DELETE`, `@PATCH`, `@Path`, `@Query`, `@QueryMap`,
-  `@Body`, `@Url`, `@Header`, `@HeaderMap`, `@Headers`, `@Field`, `@FormUrlEncoded`.
+  `@Body`, `@Url`, `@Header`, `@HeaderMap`, `@Headers`, `@Field`, `@FormUrlEncoded`,
+  `@Part`, and `@Multipart`.
 
 - **Sync & Async Execution**
   - Synchronous methods returning plain types (`User`, `List<User>`, `String`, `InputStream`, `void`).
@@ -40,7 +74,7 @@ familiar developer experience fully optimised for modern Java.
 
 - **Two-Stage Interceptor Pipeline**
   - **Stage 1 — `ClientInterceptor`**: request-only transformations (auth headers, static headers).
-  - **Stage 2 — `HttpExchangeInterceptor`**: around-call wrappers (metrics, retry, token refresh, response logging).
+  - **Stage 2 — exchange interceptors**: sync and async around-call wrappers (metrics, retry, token refresh, response logging).
 
 - **Pluggable Message Converters**
   Built-in: `StringConverter` (raw text) and `JacksonConverter` (JSON).
@@ -53,9 +87,12 @@ familiar developer experience fully optimised for modern Java.
 - **Form URL Encoding**
   `@FormUrlEncoded` + `@Field` for `application/x-www-form-urlencoded` bodies.
 
+- **Multipart Uploads**
+  `@Multipart` + `@Part` for text and in-memory binary form-data uploads.
+
 - **Auth Helpers**
   `BasicAuthInterceptor`, `BearerAuthInterceptor`, and full OAuth 2.0 token-refresh
-  infrastructure (`TokenFetcher`, `AccessToken`, `RefreshingTokenManager`, `OAuthInterceptor`).
+  infrastructure (`TokenFetcher`, `AccessToken`, `RefreshingTokenManager`, `OAuth2Decorator`).
 
 - **Micrometer Metrics**
   `MicrometerMetricsRecorder` + `MetricsExchangeInterceptor` emit dimensional latency
@@ -73,11 +110,18 @@ familiar developer experience fully optimised for modern Java.
 <dependency>
   <groupId>io.declarative.http</groupId>
   <artifactId>native-rest-client</artifactId>
-  <version>1.0.0</version>
+  <version>1.0.0-SNAPSHOT</version>
 </dependency>
 ```
 
+Use the version published by your repository; the source tree currently builds as
+`1.0.0-SNAPSHOT`.
+
 Requires Java 21+.
+
+The base library has no networking engine dependency. Jackson and SLF4J provide JSON
+conversion and logging APIs; Micrometer is optional and needed only when you use the
+Micrometer recorder.
 
 ---
 
@@ -86,6 +130,8 @@ Requires Java 21+.
 ### 1. Define your API interface
 
 ```java
+record User(long id, String name, String email) {}
+
 public interface UserService {
 
     @GET("/users/{id}")
@@ -100,13 +146,21 @@ public interface UserService {
             @Query("size") int size,
             @Query("sort") String sort
     );
+
+    @POST("/users")
+    User createUser(@Body User user);
 }
 ```
+
+Each remotely invoked method must have exactly one HTTP-method annotation. The
+client validates the complete interface when `create(...)` is called, so invalid
+paths, parameter bindings, or return types fail before the first network request.
 
 ### 2. Build a client
 
 ```java
 NativeRestClient client = NativeRestClient.builder("https://api.example.com")
+        .requestTimeout(Duration.ofSeconds(30))
         .build();
 
 UserService api = client.create(UserService.class);
@@ -114,19 +168,52 @@ UserService api = client.create(UserService.class);
 // Synchronous
 User user = api.getUser(42L);
 
-// Asynchronous with timeout
-User asyncUser = api.getUserAsync(42L)
-        .orTimeout(2, TimeUnit.SECONDS)
-        .join();
+// The same transport timeout and built-in policies apply asynchronously.
+User asyncUser = api.getUserAsync(42L).join();
 ```
 
-### 3. Using virtual threads (recommended for high concurrency)
+### 3. Send a request
+
+```java
+try (client) {
+    User created = api.createUser(new User(0, "Ada", "ada@example.com"));
+    List<User> page = api.listUsers(0, 20, "name");
+}
+```
+
+### 4. Using virtual threads (recommended for high concurrency)
 
 ```java
 NativeRestClient client = NativeRestClient.builder("https://api.example.com")
         .executor(Executors.newVirtualThreadPerTaskExecutor())
         .build();
 ```
+
+### 5. Pick the return style that fits the call
+
+| Need | Service-method return type | Responsibility |
+|---|---|---|
+| A decoded response body | `User` or `List<User>` | The client closes the response body. |
+| Non-blocking execution | `CompletableFuture<User>` | Handle failures with the returned future. |
+| Status and headers | `HttpResponseEnvelope<User>` | Check `isSuccessful()` and inspect `errorBody()` on errors. |
+| Streaming download | `InputStream` or `HttpResponseEnvelope<InputStream>` | The caller must close the stream. |
+
+For a streaming method, ownership is explicit:
+
+```java
+try (InputStream body = filesApi.download(reportId)) {
+    Files.copy(body, Path.of("report.pdf"));
+}
+```
+
+### 6. Know the safe defaults
+
+- Requests time out after 30 seconds by default; the internally-created JDK client has a
+  10-second connection timeout.
+- The default JSON mapper understands Java time types and ignores unknown response fields.
+- `Authorization`, cookies, and common API-key headers are redacted from built-in logs.
+- Retry is limited to `GET` and `HEAD`; it closes discarded responses before retrying.
+- Invalid service declarations fail from `client.create(...)`, before any network request.
 
 ---
 
@@ -141,6 +228,7 @@ NativeRestClient client = NativeRestClient.builder("https://api.example.com")
 | `@PATCH(path)` | method | HTTP PATCH |
 | `@Headers({"K: V"})` | method | Static headers added to every call of this method |
 | `@FormUrlEncoded` | method | Encodes `@Field` params as `application/x-www-form-urlencoded` |
+| `@Multipart` | method | Encodes `@Part` params as `multipart/form-data` |
 | `@Path("name")` | parameter | URL path segment replacement (`{name}`) — null values throw `IllegalArgumentException` |
 | `@Query("name")` | parameter | Appends `?name=value` to the URL; null values are omitted |
 | `@QueryMap` | parameter | Appends all `Map<String, ?>` entries as query parameters |
@@ -149,19 +237,76 @@ NativeRestClient client = NativeRestClient.builder("https://api.example.com")
 | `@Body` | parameter | Serialises the parameter as the request body (JSON by default) |
 | `@Url` | parameter | Overrides the full request URL (ignores the path in `@GET` etc.) |
 | `@Field("name")` | parameter | One form field; requires `@FormUrlEncoded` on the method |
+| `@Part("name")` | parameter | One text or `MultipartPart` value; requires `@Multipart` on the method |
+
+### A declarative request in one place
+
+```java
+public interface OrdersApi {
+
+    @Headers({"Accept: application/json"})
+    @PATCH("/orders/{orderId}")
+    Order update(
+            @Path("orderId") String orderId,
+            @Query("dryRun") boolean dryRun,
+            @Header("If-Match") String version,
+            @Body UpdateOrderRequest request,
+            RequestOptions options);
+}
+```
+
+The annotations describe only this request. Shared behavior—authentication,
+logging, metrics, retries, and token refresh—belongs on the reusable client
+builder through interceptors or decorators.
+
+### Declaration rules
+
+- A remotely-invoked method has exactly one of `@GET`, `@POST`, `@PUT`, `@PATCH`, or `@DELETE`.
+- Each ordinary parameter has one binding annotation. `RequestOptions` is the sole
+  unannotated binding and must be the final parameter.
+- `@FormUrlEncoded` requires one or more `@Field` parameters and cannot be combined with `@Body`.
+- `@Multipart` requires one or more `@Part` parameters and cannot be combined with `@Body`, `@Field`, or `@FormUrlEncoded`.
+- Return `T`, `CompletableFuture<T>`, `HttpResponseEnvelope<T>`, or
+  `CompletableFuture<HttpResponseEnvelope<T>>`; use `InputStream` only when the caller will close it.
+
+## Request Options
+
+`RequestOptions` is not an annotation. Declare it as the final, unannotated
+parameter when one call needs extra headers or a timeout override.
+
+```java
+@POST("/payments")
+Payment createPayment(@Body PaymentRequest request, RequestOptions options);
+```
+
+```java
+RequestOptions options = RequestOptions.builder()
+        .header("X-Correlation-Id", correlationId)
+        .header("Idempotency-Key", idempotencyKey)
+        .timeout(Duration.ofSeconds(5))
+        .build();
+```
+
+Options override static and parameter headers for that call. Client interceptors,
+such as authentication, still execute afterwards and may apply their own final policy.
+
+Use it for data that varies per operation—such as trace IDs, idempotency keys, or
+shorter deadlines—not for shared credentials. Authentication belongs in a client
+interceptor so it is applied consistently to every request.
 
 ---
 
 ## Architecture & Execution Flow
 
-To see the internal components and how requests are constructed and executed, refer to [EXECUTION_FLOW.md](EXECUTION_FLOW.md).
+For the complete request lifecycle and the reasoning behind the OAuth2 design, see
+[the design and gap analysis](docs/rest-client-gap-analysis.md).
 
 ---
 
 ## Interceptor Pipeline
 
 When a proxy method is invoked, requests flow through two sequential stages before reaching
-`HttpClient.send(..)`:
+`HttpClient.send(..)` or `sendAsync(..)`:
 
 ```
 Method call
@@ -172,13 +317,13 @@ Method call
 · examples: LoggingInterceptor, BasicAuthInterceptor, BearerAuthInterceptor
 │
 ▼
-[Stage 2 — HttpExchangeInterceptor chain]
+[Stage 2 — sync or async exchange-interceptor chain]
 · wraps HttpClient.send(..) — sees both HttpRequest and HttpResponse
 · examples: MetricsExchangeInterceptor, RetryOnServerErrorInterceptor,
 TokenRefreshExchangeInterceptor, ResponseLoggingExchangeInterceptor
 │
 ▼
-HttpClient.send(request)
+HttpClient.send(request) / sendAsync(request)
 │
 ▼
 [ResponseConverter chain]
@@ -205,7 +350,7 @@ public final class LoggingInterceptor implements ClientInterceptor {
     public HttpRequest intercept(HttpRequest request, InterceptorChain chain) throws IOException {
         log.info("→ {} {} headers={}",
                 request.method(),
-                request.uri(),
+                HeaderSanitizer.sanitize(request.uri()),
                 HeaderSanitizer.sanitize(request.headers()));
         return chain.proceed(request);
     }
@@ -248,34 +393,67 @@ NativeRestClient client = NativeRestClient.builder("https://api.example.com")
 If the supplier returns `null` or an empty string, the `Authorization` header is
 omitted rather than sending an invalid value.
 
-### OAuth 2.0 (Refresh Tokens)
+### OAuth 2.0 Managed Tokens
 
 Use the provided OAuth helper types to automatically refresh access tokens before
 expiry and inject them on each request. Always load secrets from your platform's
 secret store — never hard-code them.
 
 ```java
-TokenFetcher fetcher = (clientId, clientSecret, refreshToken) ->
-        oauthServer.refreshToken(clientId, clientSecret, refreshToken);
+TokenFetcher fetcher = () -> {
+    TokenResponse response = oauthServer.fetchToken();
+    return new AccessToken(
+            response.accessToken(),
+            Instant.now().plusSeconds(response.expiresIn()));
+};
 
 RefreshingTokenManager tokenManager = new RefreshingTokenManager(
         fetcher,
-        System.getenv("OAUTH_CLIENT_ID"),
-        System.getenv("OAUTH_CLIENT_SECRET"),
-        secureStore.get("refresh-token"),
+        Duration.ofSeconds(30),
         scheduledExecutorService
 );
 
-NativeRestClient client = NativeRestClient.builder("https://api.example.com")
-        .addInterceptor(new OAuthInterceptor(tokenManager::currentAccessToken))
+NativeRestClient client = OAuth2Decorator.with(tokenManager)
+        .applyTo(NativeRestClient.builder("https://api.example.com"))
         .build();
+```
+
+The decorator uses the same manager for proactive attachment and reactive 401
+handling. It refreshes only a Bearer-challenged 401 response, retries at most once,
+and never treats 403 as a token-refresh signal. Close both the client and token
+manager when the application component stops. A caller-supplied scheduler remains
+caller-owned; passing `null` creates an internal daemon scheduler.
+
+### OAuth 2.0 Client Credentials
+
+For the common machine-to-machine grant, use the JDK-only
+`ClientCredentialsTokenFetcher`. It sends the client secret in HTTP Basic
+authentication, requires an `access_token` and positive `expires_in`, and does
+not log token endpoint response bodies.
+
+```java
+TokenFetcher fetcher = ClientCredentialsTokenFetcher.builder(
+        URI.create("https://identity.example.com/oauth/token"),
+        secretStore.clientId(),
+        secretStore.clientSecret())
+        .scope("payments.read")
+        .audience("https://payments.example.com") // only for servers that use it
+        .requestTimeout(Duration.ofSeconds(10))
+        .build();
+
+try (RefreshingTokenManager tokens = new RefreshingTokenManager(fetcher, null);
+     NativeRestClient client = OAuth2Decorator.with(tokens)
+             .applyTo(NativeRestClient.builder("https://payments.example.com"))
+             .build()) {
+    PaymentsApi api = client.create(PaymentsApi.class);
+}
 ```
 
 ---
 
 ## Stage 2 — Exchange Interceptors (`HttpExchangeInterceptor`)
 
-`HttpExchangeInterceptor` wraps the entire `HttpClient.send(..)` call, giving
+`HttpExchangeInterceptor` wraps the entire synchronous `HttpClient.send(..)` call, giving
 access to both the `HttpRequest` **and** the `HttpResponse`. This is the right
 place for:
 
@@ -295,6 +473,10 @@ public interface HttpExchangeInterceptor {
 }
 ```
 
+For asynchronous methods, implement `AsyncHttpExchangeInterceptor`. The built-in
+metrics, retry, response-logging, and OAuth2 interceptors implement both interfaces;
+registering them with `addExchangeInterceptor` enables both paths automatically.
+
 Multiple exchange interceptors execute in **registration order** (first registered
 = outermost wrapper):
 
@@ -311,6 +493,9 @@ NativeRestClient client = NativeRestClient.builder("https://api.example.com")
 Records HTTP call latency, status code, and I/O errors via a `MetricsRecorder`.
 The built-in `MicrometerMetricsRecorder` integrates with any Micrometer backend
 (Prometheus, Datadog, OTLP, etc.).
+
+Micrometer is an optional dependency. Consumers using this adapter must declare
+`micrometer-core` and their chosen registry; neither is forced on other consumers.
 
 ```java
 // In Spring Boot, inject the auto-configured MeterRegistry instead of SimpleMeterRegistry.
@@ -351,41 +536,39 @@ public final class DatadogMetricsRecorder implements MetricsRecorder {
 
 ### RetryOnServerErrorInterceptor
 
-Retries idempotent methods (`GET`, `HEAD`) on 5xx responses or I/O exceptions,
-with exponential backoff capped at 30 s. Non-idempotent methods (`POST`, `PUT`,
-`PATCH`, `DELETE`) are never retried.
+Retries idempotent methods (`GET`, `HEAD`) on 429/5xx responses or I/O exceptions.
+Discarded response bodies are closed before retrying. Non-idempotent methods
+(`POST`, `PUT`, `PATCH`, `DELETE`) are never retried. `Retry-After` is honored
+up to the configured maximum; locally calculated delays can use jitter.
 
 ```java
 NativeRestClient client = NativeRestClient.builder("https://api.example.com")
         .addExchangeInterceptor(new RetryOnServerErrorInterceptor(
-                3,      // maxAttempts (includes the first attempt)
-                200L    // initialBackoffMillis — doubles each retry, max 30 000 ms
-        ))
+                RetryPolicy.builder()
+                        .maxAttempts(3)
+                        .initialBackoff(Duration.ofMillis(200))
+                        .maxBackoff(Duration.ofSeconds(30))
+                        .jitterFactor(0.2)
+                        .build()))
         .build();
 ```
 
 ### TokenRefreshExchangeInterceptor
 
-On a `401 Unauthorized` response, invokes the refresh `Runnable`, then retries
-the request once with an updated `Authorization: Bearer <newToken>` header. If the
-retry also returns 401, that response is returned as-is — no infinite loop.
+On a `401 Unauthorized` response carrying a Bearer challenge, refreshes through
+the shared `TokenManager` and retries once with a distinct token. It does not
+refresh for 403, non-Bearer 401 responses, blank tokens, or unchanged tokens.
 
 ```java
-AtomicReference<String> token = new AtomicReference<>(fetchInitialToken());
-
-NativeRestClient client = NativeRestClient.builder("https://api.example.com")
-        .addInterceptor(new BearerAuthInterceptor(token::get))
-        .addExchangeInterceptor(new TokenRefreshExchangeInterceptor(
-                token::get,
-                () -> token.set(oauthClient.refreshAccessToken())
-        ))
+NativeRestClient client = OAuth2Decorator.with(tokenManager)
+        .applyTo(NativeRestClient.builder("https://api.example.com"))
         .build();
 ```
 
 ### ResponseLoggingExchangeInterceptor
 
-Logs response status code, URI, and headers at `INFO` level. Logs a truncated
-body preview (first 1 024 bytes) at `DEBUG` level for `String` responses.
+Logs response status code, query-free URI, and sanitized headers at `INFO` level.
+Response bodies are never logged.
 
 ```java
 NativeRestClient client = NativeRestClient.builder("https://api.example.com")
@@ -454,18 +637,19 @@ NativeRestClient client = NativeRestClient.builder("https://api.example.com")
 
 ## Response Envelopes
 
-By default, non-2xx responses throw `ApiException`. Declare methods returning
-`HttpResponseEnvelope<T>` to access status code, headers, and body without
-exceptions — even for 4xx and 5xx responses.
+By default, 4xx and 5xx responses use `ApiException`. You can replace that
+mapping with an `ErrorDecoder`. Declare methods returning `HttpResponseEnvelope<T>`
+to access status code, headers, and body without invoking either error mapping—even
+for 4xx and 5xx responses.
 
 ```java
 public interface UserService {
 
-    // Default: throws ApiException on non-2xx
+    // Default: throws ApiException on 4xx/5xx (or your ErrorDecoder result)
     @GET("/users/{id}")
     User getUser(@Path("id") long id);
 
-    // Envelope: never throws ApiException — caller inspects the status
+    // Envelope: caller inspects the status; ErrorDecoder is not invoked
     @GET("/users/{id}")
     HttpResponseEnvelope<User> getUserEnvelope(@Path("id") long id);
 }
@@ -480,7 +664,8 @@ if (response.isSuccessful()) {
     User user = response.body();
     String traceId = response.headers().firstValue("X-Trace-Id").orElse("none");
 } else {
-    System.err.printf("Failed: %d%n", response.status());
+    System.err.printf("Failed: %d, body=%s%n",
+            response.status(), response.errorBody());
 }
 ```
 
@@ -513,11 +698,36 @@ The request body will be encoded as `application/x-www-form-urlencoded`.
 
 ---
 
+## Multipart Requests
+
+Use `@Multipart` with `@Part` values. Scalar values are sent as UTF-8 text;
+use `MultipartPart` for bytes, a filename, or an explicit part content type.
+
+```java
+public interface FilesApi {
+
+    @Multipart
+    @POST("/files")
+    FileMetadata upload(
+            @Part("description") String description,
+            @Part("file") MultipartPart file);
+}
+
+MultipartPart file = MultipartPart.fromFile(
+        Path.of("report.pdf"), "application/pdf");
+```
+
+Multipart payloads are intentionally in-memory. For very large files, use a
+dedicated streaming endpoint until streaming multipart publishers are added.
+
+---
+
 ## Error Handling
 
 | Exception | When thrown |
 |---|---|
-| `ApiException` | Non-2xx response for methods that do **not** return `HttpResponseEnvelope<T>` |
+| `ApiException` | Default mapping for 4xx/5xx responses from methods that do **not** return `HttpResponseEnvelope<T>` |
+| Custom exception | A 4xx/5xx response when configured through `.errorDecoder(...)` |
 | `RestClientException` | Framework misconfiguration, serialisation failure, or interceptor error |
 
 ```java
@@ -529,6 +739,19 @@ try {
     boolean is4xx = e.isClientError();
     boolean is5xx = e.isServerError();
 }
+```
+
+For domain-specific exceptions, configure an `ErrorDecoder`. It receives the
+status, response headers, and a bounded UTF-8 error body. It is used for both
+synchronous and asynchronous service methods; envelope methods continue to
+return `HttpResponseEnvelope<T>` instead.
+
+```java
+NativeRestClient client = NativeRestClient.builder("https://api.example.com")
+        .errorDecoder((status, headers, body) ->
+                new RemoteApiException(status,
+                        headers.firstValue("X-Error-Code").orElse("unknown"), body))
+        .build();
 ```
 
 ---
@@ -546,9 +769,9 @@ try {
 - **OAuth secrets** — always load `clientId`, `clientSecret`, and `refreshToken` from
   environment variables or a secrets manager. Never hard-code them.
 
-- **Per-request timeout** — the builder sets a 10-second connect timeout by default.
-  For read/response timeouts, use `HttpRequest.Builder.timeout(Duration)` in a custom
-  `ClientInterceptor`, or call `.orTimeout(n, unit)` on the returned `CompletableFuture`.
+- **Per-request timeout** — the internally-created HTTP client has a 10-second connect
+  timeout, and each request has a 30-second timeout by default. Override it with
+  `.requestTimeout(Duration)`; it applies to sync and async calls.
 
 ---
 
@@ -557,10 +780,10 @@ try {
 ```java
 var meterRegistry   = new SimpleMeterRegistry();   // or inject Spring's MeterRegistry
 var metricsRecorder = new MicrometerMetricsRecorder(meterRegistry);
+var tokenManager = new RefreshingTokenManager(
+        tokenFetcher, Duration.ofSeconds(30), scheduledExecutorService);
 
-AtomicReference<String> token = new AtomicReference<>(fetchInitialToken());
-
-NativeRestClient client = NativeRestClient.builder("https://api.example.com")
+NativeRestClient.Builder builder = NativeRestClient.builder("https://api.example.com")
 
         // Virtual threads for high-concurrency workloads
         .executor(Executors.newVirtualThreadPerTaskExecutor())
@@ -572,16 +795,15 @@ NativeRestClient client = NativeRestClient.builder("https://api.example.com")
 
         // Stage 1 — request interceptors (run before any network I/O)
         .addInterceptor(new LoggingInterceptor())
-        .addInterceptor(new BearerAuthInterceptor(token::get))
-
         // Stage 2 — exchange interceptors (registration order = execution order)
         .addExchangeInterceptor(new MetricsExchangeInterceptor(metricsRecorder))  // outermost
-        .addExchangeInterceptor(new RetryOnServerErrorInterceptor(3, 200L))
+        .addExchangeInterceptor(new RetryOnServerErrorInterceptor(
+                RetryPolicy.builder().maxAttempts(3).build()))
         .addExchangeInterceptor(new ResponseLoggingExchangeInterceptor())
-        .addExchangeInterceptor(new TokenRefreshExchangeInterceptor(
-                token::get,
-                () -> token.set(oauthClient.refreshAccessToken())))               // innermost
+        .requestTimeout(Duration.ofSeconds(30));
 
+NativeRestClient client = OAuth2Decorator.with(tokenManager)
+        .applyTo(builder)
         .build();
 
 UserService api = client.create(UserService.class);
@@ -597,10 +819,16 @@ UserService api = client.create(UserService.class);
 | `.httpClient(HttpClient)` | Provide a pre-configured `HttpClient` (overrides `.executor`) |
 | `.executor(Executor)` | Sets the executor used by the internally created `HttpClient` |
 | `.objectMapper(ObjectMapper)` | Custom `ObjectMapper`; a default one with `JavaTimeModule` is used if omitted |
+| `.requestTimeout(Duration)` | Sets the per-request timeout; defaults to 30 seconds |
+| `.errorDecoder(ErrorDecoder)` | Maps non-envelope 4xx/5xx responses to application exceptions |
 | `.addInterceptor(ClientInterceptor)` | Appends a Stage 1 request interceptor |
-| `.addExchangeInterceptor(HttpExchangeInterceptor)` | Appends a Stage 2 exchange interceptor |
+| `.addExchangeInterceptor(HttpExchangeInterceptor)` | Appends a sync Stage 2 interceptor and its async side when implemented |
+| `.addAsyncExchangeInterceptor(AsyncHttpExchangeInterceptor)` | Appends an async-only Stage 2 interceptor |
 | `.addConverter(ResponseConverter)` | Prepends a custom converter before Jackson |
 | `.build()` | Constructs and returns the `NativeRestClient` |
+
+`NativeRestClient` is `AutoCloseable`. It closes an internally-created `HttpClient`
+but never closes a client supplied through `.httpClient(...)`.
 
 ---
 

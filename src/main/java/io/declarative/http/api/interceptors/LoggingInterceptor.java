@@ -15,7 +15,7 @@ public final class LoggingInterceptor implements ClientInterceptor {
     public HttpRequest intercept(HttpRequest request, InterceptorChain chain) throws IOException {
         long start = System.currentTimeMillis();
         log.info("→ {} {} headers={}",
-                request.method(), request.uri(),
+                request.method(), HeaderSanitizer.sanitize(request.uri()),
                 HeaderSanitizer.sanitize(request.headers()));
 
         HttpRequest next = chain.proceed(request);

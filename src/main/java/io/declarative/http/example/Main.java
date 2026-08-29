@@ -2,7 +2,7 @@ package io.declarative.http.example;
 
 import io.declarative.http.api.auth.BearerAuthInterceptor;
 import io.declarative.http.api.interceptors.LoggingInterceptor;
-import io.declarative.http.api.interceptors.RetryInterceptor;
+import io.declarative.http.api.interceptors.RetryOnServerErrorInterceptor;
 import io.declarative.http.client.NativeRestClient;
 
 import java.util.List;
@@ -18,7 +18,7 @@ public class Main {
                 //.connectTimeout(Duration.ofSeconds(5))
                 .addInterceptor(new LoggingInterceptor())
                 .addInterceptor(new BearerAuthInterceptor(() -> getAccessToken()))
-                .addInterceptor(new RetryInterceptor(3, 500L))
+                .addExchangeInterceptor(new RetryOnServerErrorInterceptor(3, 500L))
                 .build();
 
         UserService api = client.create(UserService.class);

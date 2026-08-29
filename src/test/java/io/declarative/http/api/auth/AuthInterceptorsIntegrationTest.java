@@ -4,14 +4,21 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.declarative.http.api.annotation.GET;
 import io.declarative.http.api.auth.oauth.OAuthInterceptor;
+import io.declarative.http.api.interceptors.ClientInterceptor;
+import io.declarative.http.api.interceptors.InterceptorChain;
 import io.declarative.http.client.NativeRestClient;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpRequest;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
@@ -51,6 +58,7 @@ class AuthInterceptorsIntegrationTest {
     // ── BasicAuth ─────────────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Adds an HTTP Basic header for static credentials")
     void basicAuth_staticCredentials_addsCorrectHeader() {
         String expected = "Basic " + Base64.getEncoder()
                 .encodeToString("alice:secret".getBytes(StandardCharsets.UTF_8));
@@ -66,6 +74,7 @@ class AuthInterceptorsIntegrationTest {
     }
 
     @Test
+    @DisplayName("Uses updated credentials when the Basic-auth suppliers rotate")
     void basicAuth_dynamicCredentials_rotatesCorrectly() {
         AtomicReference<String> password = new AtomicReference<>("pass1");
         NativeRestClient c = NativeRestClient.builder("http://localhost:" + wm.port())
@@ -91,6 +100,7 @@ class AuthInterceptorsIntegrationTest {
     // ── BearerAuth ────────────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Adds the expected Bearer authorization header")
     void bearerAuth_addsCorrectHeader() {
         wm.stubFor(get("/bearer")
                 .withHeader("Authorization", equalTo("Bearer my-token"))
@@ -103,6 +113,7 @@ class AuthInterceptorsIntegrationTest {
     }
 
     @Test
+    @DisplayName("Leaves the request unchanged when the Bearer token is absent")
     void bearerAuth_nullToken_passesThrough() {
         // FIX (P0): BearerAuthInterceptor now skips header injection for null
         wm.stubFor(get("/missing-token")
@@ -118,6 +129,7 @@ class AuthInterceptorsIntegrationTest {
     // ── OAuthInterceptor ──────────────────────────────────────────────────────
 
     @Test
+    @DisplayName("Adds an OAuth token using the default Bearer scheme")
     void oAuth_defaultBearerType_addsHeader() {
         wm.stubFor(get("/oauth")
                 .withHeader("Authorization", equalTo("Bearer oauth-token-abc"))
@@ -133,6 +145,7 @@ class AuthInterceptorsIntegrationTest {
     }
 
     @Test
+    @DisplayName("Adds an OAuth token using the configured authorization scheme")
     void oAuth_customTokenType_addsCorrectHeader() {
         wm.stubFor(get("/custom")
                 .withHeader("Authorization", equalTo("Token custom-456"))
@@ -144,6 +157,7 @@ class AuthInterceptorsIntegrationTest {
     }
 
     @Test
+    @DisplayName("Leaves the request unchanged when the OAuth token is blank")
     void oAuth_blankToken_passesThrough() {
         wm.stubFor(get("/missing-token")
                 //.withoutHeader("Authorization")
@@ -152,5 +166,38 @@ class AuthInterceptorsIntegrationTest {
                 .addInterceptor(new OAuthInterceptor(() -> ""))
                 .build();
         assertThat(c.create(AuthApi.class).missingToken()).isEqualTo("no-auth");
+    }
+
+    @Test
+    @DisplayName("Replaces an existing authorization header with HTTP Basic credentials")
+    void basicAuth_replacesExistingAuthorizationHeader() throws IOException {
+        HttpRequest request = applyToRequest(
+                new BasicAuthInterceptor("alice", "secret"));
+        assertThat(request.headers().allValues("Authorization"))
+                .singleElement().asString().startsWith("Basic ");
+    }
+
+    @Test
+    @DisplayName("Replaces an existing authorization header with a Bearer token")
+    void bearerAuth_replacesExistingAuthorizationHeader() throws IOException {
+        HttpRequest request = applyToRequest(new BearerAuthInterceptor("fresh"));
+        assertThat(request.headers().allValues("Authorization"))
+                .containsExactly("Bearer fresh");
+    }
+
+    @Test
+    @DisplayName("Replaces an existing authorization header with an OAuth token")
+    void oauth_replacesExistingAuthorizationHeader() throws IOException {
+        HttpRequest request = applyToRequest(new OAuthInterceptor(() -> "fresh"));
+        assertThat(request.headers().allValues("Authorization"))
+                .containsExactly("Bearer fresh");
+    }
+
+    private static HttpRequest applyToRequest(ClientInterceptor interceptor)
+            throws IOException {
+        HttpRequest original = HttpRequest.newBuilder(URI.create("https://example.test"))
+                .header("authorization", "Bearer stale")
+                .build();
+        return new InterceptorChain(List.of(interceptor)).proceed(original);
     }
 }

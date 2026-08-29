@@ -5,12 +5,15 @@ import io.declarative.http.error.RestClientException;
 
 import java.net.URI;
 import java.net.http.HttpRequest;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
+import java.util.TreeMap;
+import java.util.UUID;
 
 /**
  * Mutable accumulator that collects URI fragments, headers, query parameters,
@@ -40,9 +43,10 @@ public final class RequestContext {
     private String resolvedUrl;
 
     private final List<String[]>        queryParams = new ArrayList<>();
-    private final Map<String, String>   headers     = new LinkedHashMap<>();
+    private final Map<String, String>   headers     = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     private Object                      body;
     private final ObjectMapper          objectMapper;
+    private Duration                    requestTimeout;
 
     // ── Form-encoding state ───────────────────────────────────────────────────
 
@@ -57,6 +61,15 @@ public final class RequestContext {
      * Controls body serialisation in {@link #resolveBodyPublisher()}.
      */
     private boolean formUrlEncoded = false;
+
+    /** Contributions accumulated from {@code @Part} parameters on a multipart method. */
+    private final List<MultipartContribution> multipartParts = new ArrayList<>();
+
+    /** Controls multipart body construction in {@link #resolveBodyPublisher()}. */
+    private boolean multipart = false;
+
+    /** Boundary generated while building the one multipart request. */
+    private String multipartBoundary;
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
@@ -171,6 +184,55 @@ public final class RequestContext {
         this.formUrlEncoded = formUrlEncoded;
     }
 
+    /**
+     * Switches the request body serialisation strategy to {@code multipart/form-data}.
+     *
+     * @param multipart {@code true} to activate multipart mode
+     */
+    public void setMultipart(boolean multipart) {
+        this.multipart = multipart;
+    }
+
+    /**
+     * Accumulates one named multipart part. A {@code null} value is omitted.
+     *
+     * @param name multipart form field name
+     * @param value scalar text value or {@link MultipartPart}
+     * @throws RestClientException if the part name is unsafe for a MIME header
+     */
+    public void addMultipartPart(String name, Object value) {
+        if (value == null) {
+            return;
+        }
+        validateMultipartToken(name, "Multipart part name");
+        multipartParts.add(new MultipartContribution(name, value));
+    }
+
+    /**
+     * Applies immutable per-invocation overrides after annotation-derived headers.
+     *
+     * @param options request overrides; {@code null} has no effect
+     */
+    public void applyOptions(RequestOptions options) {
+        if (options == null) {
+            return;
+        }
+        options.headers().forEach(this::addHeader);
+        if (options.timeout() != null) {
+            setRequestTimeout(options.timeout());
+        }
+    }
+
+    /**
+     * Applies the per-request transport timeout.
+     *
+     * @param requestTimeout timeout configured by the client builder, or {@code null}
+     *                       when the caller intentionally leaves the request unlimited
+     */
+    public void setRequestTimeout(Duration requestTimeout) {
+        this.requestTimeout = requestTimeout;
+    }
+
     // ── Terminal method ───────────────────────────────────────────────────────
 
     /**
@@ -182,7 +244,7 @@ public final class RequestContext {
      *   <li>Appends query parameters to the URI.</li>
      *   <li>Adds a default {@code Accept: application/json} header.</li>
      *   <li>Overlays any user-supplied headers.</li>
-     *   <li>Selects the appropriate body publisher (form, JSON, or empty).</li>
+     *   <li>Selects the appropriate body publisher (form, multipart, JSON, or empty).</li>
      *   <li>Sets the correct {@code Content-Type} header.</li>
      * </ol>
      *
@@ -194,22 +256,30 @@ public final class RequestContext {
         URI uri = buildUri();
 
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri);
+        if (requestTimeout != null) {
+            builder.timeout(requestTimeout);
+        }
 
         // Default Accept — individual @Header params can override this
-        builder.header("Accept", "application/json");
+        builder.setHeader("Accept", "application/json");
 
         // User-supplied headers (applied after default so they can override)
-        headers.forEach(builder::header);
+        headers.forEach(builder::setHeader);
 
         // Body publisher
         HttpRequest.BodyPublisher publisher = resolveBodyPublisher();
         builder.method(httpMethod, publisher);
 
         // Content-Type
-        if (formUrlEncoded) {
-            builder.header("Content-Type", "application/x-www-form-urlencoded");
-        } else if (body != null) {
-            builder.header("Content-Type", "application/json; charset=UTF-8");
+        if (!headers.containsKey("Content-Type")) {
+            if (formUrlEncoded) {
+                builder.setHeader("Content-Type", "application/x-www-form-urlencoded");
+            } else if (multipart) {
+                builder.setHeader("Content-Type",
+                        "multipart/form-data; boundary=" + multipartBoundary);
+            } else if (body != null) {
+                builder.setHeader("Content-Type", "application/json; charset=UTF-8");
+            }
         }
 
         return builder.build();
@@ -239,7 +309,26 @@ public final class RequestContext {
         for (String[] kv : queryParams) {
             joiner.add(kv[0] + "=" + kv[1]);
         }
-        return URI.create(resolvedUrl + "?" + joiner);
+        URI base = URI.create(resolvedUrl);
+        StringBuilder merged = new StringBuilder();
+        if (base.getScheme() != null) {
+            merged.append(base.getScheme()).append(':');
+        }
+        if (base.getRawAuthority() != null) {
+            merged.append("//").append(base.getRawAuthority());
+        }
+        if (base.getRawPath() != null) {
+            merged.append(base.getRawPath());
+        }
+        merged.append('?');
+        if (base.getRawQuery() != null && !base.getRawQuery().isEmpty()) {
+            merged.append(base.getRawQuery()).append('&');
+        }
+        merged.append(joiner);
+        if (base.getRawFragment() != null) {
+            merged.append('#').append(base.getRawFragment());
+        }
+        return URI.create(merged.toString());
     }
 
     /**
@@ -248,6 +337,7 @@ public final class RequestContext {
      * <ul>
      *   <li><b>Form-encoded:</b> joins all accumulated {@link #formFields} with
      *       {@code &} and publishes as UTF-8 bytes.</li>
+     *   <li><b>Multipart:</b> serialises {@link #multipartParts} with a fresh MIME boundary.</li>
      *   <li><b>JSON:</b> serialises {@link #body} via Jackson.</li>
      *   <li><b>Empty:</b> used for GET / DELETE methods with no body.</li>
      * </ul>
@@ -264,6 +354,13 @@ public final class RequestContext {
             }
             return HttpRequest.BodyPublishers.ofString(
                     joiner.toString(), StandardCharsets.UTF_8);
+        }
+
+        // ── Multipart body ───────────────────────────────────────────────────
+        if (multipart) {
+            multipartBoundary = "NativeRestClient-" + UUID.randomUUID();
+            return HttpRequest.BodyPublishers.ofByteArray(
+                    encodeMultipartBody(multipartBoundary));
         }
 
         if (body instanceof String s) {
@@ -283,5 +380,78 @@ public final class RequestContext {
 
         // ── No body (GET, DELETE, HEAD, …) ────────────────────────────────────
         return HttpRequest.BodyPublishers.noBody();
+    }
+
+    /**
+     * Produces a standards-compliant in-memory multipart body for the accumulated parts.
+     *
+     * @param boundary boundary chosen for the enclosing request
+     * @return complete UTF-8/header and binary payload byte sequence
+     */
+    private byte[] encodeMultipartBody(String boundary) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        for (MultipartContribution contribution : multipartParts) {
+            writeUtf8(output, "--" + boundary + "\r\n");
+            writeUtf8(output, "Content-Disposition: form-data; name=\""
+                    + escapeQuoted(contribution.name()) + "\"");
+
+            if (contribution.value() instanceof MultipartPart part) {
+                if (part.fileName() != null) {
+                    writeUtf8(output, "; filename=\"" + escapeQuoted(part.fileName()) + "\"");
+                }
+                writeUtf8(output, "\r\nContent-Type: " + part.contentType() + "\r\n\r\n");
+                output.writeBytes(part.bytes());
+            } else {
+                writeUtf8(output, "\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n");
+                writeUtf8(output, String.valueOf(contribution.value()));
+            }
+            writeUtf8(output, "\r\n");
+        }
+        writeUtf8(output, "--" + boundary + "--\r\n");
+        return output.toByteArray();
+    }
+
+    /**
+     * Writes trusted protocol framing or validated scalar data as UTF-8.
+     *
+     * @param output multipart output buffer
+     * @param value text to encode
+     */
+    private static void writeUtf8(ByteArrayOutputStream output, String value) {
+        output.writeBytes(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Escapes a header quoted-string after the source has been checked for line breaks.
+     *
+     * @param value header token value
+     * @return an escaped value suitable between double quotes
+     */
+    private static String escapeQuoted(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    /**
+     * Prevents user data from injecting additional multipart MIME headers.
+     *
+     * @param value value to validate
+     * @param label name used in diagnostics
+     */
+    private static void validateMultipartToken(String value, String label) {
+        if (value == null || value.isBlank()) {
+            throw new RestClientException(label + " must not be blank");
+        }
+        if (value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) {
+            throw new RestClientException(label + " must not contain CR or LF");
+        }
+    }
+
+    /**
+     * Associates the declarative part name with its runtime value.
+     *
+     * @param name validated multipart field name
+     * @param value scalar or {@link MultipartPart} payload
+     */
+    private record MultipartContribution(String name, Object value) {
     }
 }

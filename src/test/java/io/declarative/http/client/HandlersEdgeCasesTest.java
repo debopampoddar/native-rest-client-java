@@ -13,6 +13,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -82,7 +83,9 @@ class HandlersEdgeCasesTest {
 
         @GET("/bad-header-map")
         String badHeaderMap(@HeaderMap String notAMap);
+    }
 
+    interface NoAnnotationApi {
         @GET("/no-annotation")
         String noAnnotation(String value);
     }
@@ -113,6 +116,7 @@ class HandlersEdgeCasesTest {
     // -------------------------------------------------------------------------
 
     @Test
+    @DisplayName("Input stream response is passed through")
     void inputStreamResponse_isPassedThrough() throws Exception {
         wm.stubFor(get("/stream").willReturn(ok("payload")));
         InputStream in = client.create(StreamApi.class).getStream();
@@ -121,6 +125,7 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
+    @DisplayName("Input stream envelope preserves status headers and body")
     void inputStreamEnvelope_preservesStatusHeadersAndBody() throws Exception {
         wm.stubFor(get("/stream")
                 .willReturn(ok("payload").withHeader("X-Test", "1")));
@@ -141,6 +146,7 @@ class HandlersEdgeCasesTest {
     // -------------------------------------------------------------------------
 
     @Test
+    @DisplayName("Path handler respects encoded flag and does not double encode")
     void pathHandler_respectsEncodedFlag_andDoesNotDoubleEncode() {
         // Expect literal %2F and %20 from the client — no additional encoding
         wm.stubFor(get("/files/a%2Fb%20c").willReturn(ok("ok")));
@@ -150,6 +156,7 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
+    @DisplayName("Query handler supports collection values")
     void queryHandler_supportsCollectionValues() {
         wm.stubFor(get(urlPathEqualTo("/search"))
                 .withQueryParam("tag", equalTo("java"))
@@ -163,6 +170,7 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
+    @DisplayName("Query handler encoded true does not double encode")
     void queryHandler_encodedTrue_doesNotDoubleEncode() {
         wm.stubFor(get(urlPathEqualTo("/raw-query"))
                 // WireMock compares against the decoded value
@@ -176,6 +184,7 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
+    @DisplayName("Query map default encoding encodes keys and values")
     void queryMap_defaultEncoding_encodesKeysAndValues() {
         wm.stubFor(get(urlPathEqualTo("/query-map"))
                 .withQueryParam("status", equalTo("active"))
@@ -195,6 +204,7 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
+    @DisplayName("Query map encoded true does not double encode")
     void queryMap_encodedTrue_doesNotDoubleEncode() {
         wm.stubFor(get(urlPathEqualTo("/query-map-raw"))
                 .withQueryParam("raw", equalTo("raw=value"))
@@ -209,6 +219,7 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
+    @DisplayName("Header map applies only non null entries")
     void headerMap_appliesOnlyNonNullEntries() {
         wm.stubFor(get("/headers")
                 .withHeader("X-Trace-Id", equalTo("abc123"))
@@ -227,6 +238,7 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
+    @DisplayName("Url handler overrides full url when non null")
     void urlHandler_overridesFullUrlWhenNonNull() {
         wm.stubFor(get("/dynamic").willReturn(ok("dynamic-ok")));
 
@@ -236,6 +248,7 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
+    @DisplayName("Url handler preserves original path when null")
     void urlHandler_preservesOriginalPathWhenNull() {
         wm.stubFor(get("/ping").willReturn(ok("pong")));
 
@@ -248,6 +261,7 @@ class HandlersEdgeCasesTest {
     // -------------------------------------------------------------------------
 
     @Test
+    @DisplayName("Query map non map parameter throws illegal argument exception")
     void queryMap_nonMapParameter_throwsIllegalArgumentException() {
         BadHandlerApi api = client.create(BadHandlerApi.class);
 
@@ -257,6 +271,7 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
+    @DisplayName("Header map non map parameter throws illegal argument exception")
     void headerMap_nonMapParameter_throwsIllegalArgumentException() {
         BadHandlerApi api = client.create(BadHandlerApi.class);
 
@@ -266,10 +281,9 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
-    void parameterWithoutAnnotation_causesRestClientExceptionOnInvocation() {
-        BadHandlerApi api = client.create(BadHandlerApi.class);
-
-        assertThatThrownBy(() -> api.noAnnotation("value"))
+    @DisplayName("Parameter without annotation causes rest client exception on proxy creation")
+    void parameterWithoutAnnotation_causesRestClientExceptionOnProxyCreation() {
+        assertThatThrownBy(() -> client.create(NoAnnotationApi.class))
                 .isInstanceOf(RestClientException.class)
                 .hasMessageContaining("has no recognised annotation");
     }
@@ -284,6 +298,7 @@ class HandlersEdgeCasesTest {
     }
 
     @Test
+    @DisplayName("Async method uses async path and returns completable future")
     void asyncMethod_usesAsyncPathAndReturnsCompletableFuture() {
         wm.stubFor(get("/async").willReturn(ok("async-ok")));
         AsyncApi api = client.create(AsyncApi.class);

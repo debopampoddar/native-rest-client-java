@@ -15,12 +15,14 @@ import io.declarative.http.client.RequestContext;
  * <ul>
  *   <li>{@link BodyHandler}       — maps {@code @Body} parameters (JSON body)</li>
  *   <li>{@link FieldHandler}      — maps {@code @Field} parameters (form fields)</li>
+ *   <li>{@link PartHandler}       — maps {@code @Part} parameters (multipart fields)</li>
  *   <li>{@link HeaderHandler}     — maps {@code @Header} parameters (single header)</li>
  *   <li>{@link HeaderMapHandler}  — maps {@code @HeaderMap} parameters (header batch)</li>
  *   <li>{@link PathHandler}       — maps {@code @Path} parameters (URI path variables)</li>
  *   <li>{@link QueryHandler}      — maps {@code @Query} parameters (URI query params)</li>
  *   <li>{@link QueryMapHandler}   — maps {@code @QueryMap} parameters (query param batch)</li>
  *   <li>{@link UrlHandler}        — maps {@code @Url} parameters (dynamic base URL)</li>
+ *   <li>{@link RequestOptionsHandler} — maps final {@code RequestOptions} parameters</li>
  * </ul>
  *
  * @see io.declarative.http.client.ResolvedMethod
@@ -28,7 +30,8 @@ import io.declarative.http.client.RequestContext;
  */
 public sealed interface ParameterHandler
         permits BodyHandler, FieldHandler, HeaderHandler, HeaderMapHandler,
-        PathHandler, QueryHandler, QueryMapHandler, UrlHandler {
+        PartHandler, PathHandler, QueryHandler, QueryMapHandler,
+        RequestOptionsHandler, UrlHandler {
 
     /**
      * Applies this parameter's contribution to the mutable request context.

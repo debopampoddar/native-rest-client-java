@@ -1,6 +1,7 @@
 package io.declarative.http.api.interceptors;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 
 import java.io.IOException;
 import java.net.URI;
@@ -18,6 +19,7 @@ class RetryInterceptorTest {
     }
 
     @Test
+    @DisplayName("Successful on first attempt does not retry")
     void successfulOnFirstAttempt_doesNotRetry() throws IOException {
         RetryInterceptor interceptor = new RetryInterceptor(3, 1L);
         AtomicInteger calls = new AtomicInteger();
@@ -35,6 +37,7 @@ class RetryInterceptorTest {
     }
 
     @Test
+    @DisplayName("Retries on io exception until success")
     void retriesOnIOException_untilSuccess() throws IOException {
         RetryInterceptor interceptor = new RetryInterceptor(3, 1L);
         AtomicInteger calls = new AtomicInteger();
@@ -55,6 +58,7 @@ class RetryInterceptorTest {
     }
 
     @Test
+    @DisplayName("Retries up to max attempts then throws")
     void retriesUpToMaxAttempts_thenThrows() {
         RetryInterceptor interceptor = new RetryInterceptor(2, 1L);
         AtomicInteger calls = new AtomicInteger();
@@ -74,6 +78,7 @@ class RetryInterceptorTest {
     }
 
     @Test
+    @DisplayName("Interrupted during sleep wraps as io exception and preserves interrupt flag")
     void interruptedDuringSleep_wrapsAsIOExceptionAndPreservesInterruptFlag() {
         RetryInterceptor interceptor = new RetryInterceptor(3, 1L);
         AtomicInteger calls = new AtomicInteger();

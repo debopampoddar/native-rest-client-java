@@ -3,9 +3,10 @@ package io.declarative.http.client;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.declarative.http.api.converters.ResponseConverter;
 import io.declarative.http.api.interceptors.ClientInterceptor;
+import io.declarative.http.api.interceptors.AsyncHttpExchangeInterceptor;
 import io.declarative.http.api.interceptors.HttpExchangeInterceptor;
 import io.declarative.http.api.interceptors.InterceptorChain;
-import io.declarative.http.error.ApiException;
+import io.declarative.http.error.ErrorDecoder;
 import io.declarative.http.error.RestClientException;
 import io.declarative.http.handler.ParameterHandler;
 import io.declarative.http.security.HeaderSanitizer;
@@ -18,7 +19,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Internal engine that translates a resolved proxy method call into an HTTP exchange
@@ -41,15 +46,15 @@ import java.util.concurrent.CompletableFuture;
  *       (e.g. metrics, retry, response logging).</li>
  *   <li><b>Response handling</b> — the response body is converted via the
  *       {@link ResponseConverter} chain to the declared return type. Non-2xx
- *       responses throw {@link ApiException} unless the return type is
+ *       responses are mapped by {@link ErrorDecoder} unless the return type is
  *       {@link HttpResponseEnvelope}.</li>
  * </ol>
  *
  * <h2>Async vs Sync</h2>
  * <p>When the proxy method declares a {@link CompletableFuture} return type,
  * {@link HttpClient#sendAsync} is used and the future is returned immediately.
- * The {@link HttpExchangeInterceptor} chain is currently bypassed for async calls;
- * synchronous calls route through the full exchange-interceptor chain.
+ * Async-capable exchange interceptors run through the corresponding
+ * {@link AsyncHttpExchangeInterceptor} chain.
  *
  * <h2>Envelope Mode</h2>
  * <p>If the method's return type is {@code HttpResponseEnvelope<T>}, the dispatcher
@@ -57,7 +62,8 @@ import java.util.concurrent.CompletableFuture;
  * {@link HttpResponseEnvelope} regardless of the HTTP status. This allows callers to
  * inspect 4xx/5xx responses without catching exceptions.
  *
- * <p>This class is package-private by design; it is not part of the public API.
+ * <p>This class is an implementation detail; applications should use
+ * {@link NativeRestClient} rather than constructing it directly.
  *
  * @see NativeRestClient
  * @see ResolvedMethod
@@ -66,6 +72,7 @@ import java.util.concurrent.CompletableFuture;
 public final class InvocationDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(InvocationDispatcher.class);
+    private static final int MAX_ERROR_BODY_BYTES = 64 * 1024;
 
     private final HttpClient httpClient;
     private final String baseUrl;
@@ -79,6 +86,9 @@ public final class InvocationDispatcher {
 
     /** Immutable snapshot of full-exchange interceptors registered at build time. */
     private final List<HttpExchangeInterceptor> exchangeInterceptors;
+    private final List<AsyncHttpExchangeInterceptor> asyncExchangeInterceptors;
+    private final Duration requestTimeout;
+    private final ErrorDecoder errorDecoder;
 
     /**
      * Constructs a dispatcher with the given infrastructure components.
@@ -92,6 +102,26 @@ public final class InvocationDispatcher {
      * @param requestInterceptors ordered list of {@link ClientInterceptor}s applied before sending
      * @param converters          ordered list of {@link ResponseConverter}s for body deserialisation
      * @param exchangeInterceptors ordered list of {@link HttpExchangeInterceptor}s wrapping the exchange
+     * @param asyncExchangeInterceptors async exchange policies
+     * @param requestTimeout timeout applied to each constructed request
+     * @param errorDecoder converts non-envelope 4xx/5xx responses to exceptions
+     */
+    public InvocationDispatcher(HttpClient httpClient,
+                                String baseUrl,
+                                ObjectMapper objectMapper,
+                                List<ClientInterceptor> requestInterceptors,
+                                List<ResponseConverter> converters,
+                                List<HttpExchangeInterceptor> exchangeInterceptors,
+                                List<AsyncHttpExchangeInterceptor> asyncExchangeInterceptors,
+                                Duration requestTimeout) {
+        this(httpClient, baseUrl, objectMapper, requestInterceptors, converters,
+                exchangeInterceptors, asyncExchangeInterceptors, requestTimeout,
+                ErrorDecoder.apiException());
+    }
+
+    /**
+     * Retained for source compatibility with callers that constructed the
+     * dispatcher directly before async policies and request timeouts were added.
      */
     public InvocationDispatcher(HttpClient httpClient,
                                 String baseUrl,
@@ -99,12 +129,41 @@ public final class InvocationDispatcher {
                                 List<ClientInterceptor> requestInterceptors,
                                 List<ResponseConverter> converters,
                                 List<HttpExchangeInterceptor> exchangeInterceptors) {
+        this(httpClient, baseUrl, objectMapper, requestInterceptors, converters,
+                exchangeInterceptors, List.of(), null, ErrorDecoder.apiException());
+    }
+
+    /**
+     * Constructs a dispatcher with explicit error decoding policy.
+     *
+     * @param httpClient JDK HTTP client used to send requests
+     * @param baseUrl root URL prepended to annotation paths
+     * @param objectMapper mapper used for request and response conversion
+     * @param requestInterceptors request-only policies
+     * @param converters response-body converters
+     * @param exchangeInterceptors synchronous exchange policies
+     * @param asyncExchangeInterceptors asynchronous exchange policies
+     * @param requestTimeout timeout applied to each generated request
+     * @param errorDecoder converts non-envelope error responses to exceptions
+     */
+    public InvocationDispatcher(HttpClient httpClient,
+                                String baseUrl,
+                                ObjectMapper objectMapper,
+                                List<ClientInterceptor> requestInterceptors,
+                                List<ResponseConverter> converters,
+                                List<HttpExchangeInterceptor> exchangeInterceptors,
+                                List<AsyncHttpExchangeInterceptor> asyncExchangeInterceptors,
+                                Duration requestTimeout,
+                                ErrorDecoder errorDecoder) {
         this.httpClient           = httpClient;
         this.baseUrl              = baseUrl;
         this.objectMapper         = objectMapper;
         this.requestInterceptors  = List.copyOf(requestInterceptors);
         this.converters           = List.copyOf(converters);
         this.exchangeInterceptors = List.copyOf(exchangeInterceptors);
+        this.asyncExchangeInterceptors = List.copyOf(asyncExchangeInterceptors);
+        this.requestTimeout = requestTimeout;
+        this.errorDecoder = Objects.requireNonNull(errorDecoder, "errorDecoder");
     }
 
     /**
@@ -120,7 +179,7 @@ public final class InvocationDispatcher {
      *                 {@code null} if the method has no parameters
      * @return the deserialised response body, a {@link CompletableFuture} for async
      *         methods, or {@code null} for {@code void} / HTTP 204 responses
-     * @throws ApiException          on 4xx/5xx responses (non-envelope mode)
+     * @throws RuntimeException      from the configured error decoder on 4xx/5xx responses
      * @throws RestClientException   on I/O failures, interceptor errors, or
      *                               deserialisation problems
      */
@@ -163,6 +222,10 @@ public final class InvocationDispatcher {
         if (resolved.isFormUrlEncoded()) {
             ctx.setFormUrlEncoded(true);
         }
+        if (resolved.isMultipart()) {
+            ctx.setMultipart(true);
+        }
+        ctx.setRequestTimeout(requestTimeout);
 
         for (String[] kv : resolved.staticHeaders()) {
             ctx.addHeader(kv[0], kv[1]);
@@ -182,7 +245,7 @@ public final class InvocationDispatcher {
             throw new RestClientException("Interceptor chain failed: " + e.getMessage(), e);
         }
 
-        log.debug("--> {} {}", request.method(), request.uri());
+        log.debug("--> {} {}", request.method(), HeaderSanitizer.sanitize(request.uri()));
         log.debug("    Headers: {}", HeaderSanitizer.sanitize(request.headers()));
 
         return request;
@@ -219,6 +282,20 @@ public final class InvocationDispatcher {
         return chain.proceed(request);
     }
 
+    private CompletableFuture<HttpResponse<InputStream>> sendAsyncWithInterceptors(
+            HttpRequest request) {
+        AsyncHttpExchangeInterceptor.AsyncExchangeChain<InputStream> terminal =
+                req -> httpClient.sendAsync(req, HttpResponse.BodyHandlers.ofInputStream());
+
+        AsyncHttpExchangeInterceptor.AsyncExchangeChain<InputStream> chain = terminal;
+        for (int i = asyncExchangeInterceptors.size() - 1; i >= 0; i--) {
+            AsyncHttpExchangeInterceptor interceptor = asyncExchangeInterceptors.get(i);
+            AsyncHttpExchangeInterceptor.AsyncExchangeChain<InputStream> next = chain;
+            chain = req -> interceptor.interceptAsync(req, next);
+        }
+        return chain.proceed(request);
+    }
+
     // ── Synchronous execution ─────────────────────────────────────────────────
 
     /**
@@ -233,7 +310,7 @@ public final class InvocationDispatcher {
      * @param resolved resolved method descriptor used for response handling
      * @return the deserialised response body, or {@code null} for void/204
      * @throws RestClientException   on I/O failure or deserialisation error
-     * @throws ApiException          on 4xx/5xx responses (non-envelope mode)
+     * @throws RuntimeException      from the configured error decoder on 4xx/5xx responses
      */
     private Object executeSync(HttpRequest request, ResolvedMethod resolved) {
         long start = System.currentTimeMillis();
@@ -247,7 +324,8 @@ public final class InvocationDispatcher {
             throw new RestClientException("HTTP call failed: " + e.getMessage(), e);
         }
         long elapsed = System.currentTimeMillis() - start;
-        log.debug("<-- {} {} ({}ms)", response.statusCode(), request.uri(), elapsed);
+        log.debug("<-- {} {} ({}ms)", response.statusCode(),
+                HeaderSanitizer.sanitize(request.uri()), elapsed);
         return handleResponse(response, resolved);
     }
 
@@ -256,24 +334,33 @@ public final class InvocationDispatcher {
     /**
      * Executes the HTTP call asynchronously using {@link HttpClient#sendAsync}.
      *
-     * <p><b>Note:</b> the {@link HttpExchangeInterceptor} chain is currently <em>not</em>
-     * applied in this path. A future enhancement may introduce an async-compatible
-     * variant of {@link HttpExchangeInterceptor.ExchangeChain} for parity.
+     * <p>Policies implementing {@link AsyncHttpExchangeInterceptor} are applied in
+     * the same registration order as synchronous exchange policies.
      *
      * @param request  the assembled HTTP request
      * @param resolved resolved method descriptor used for response handling
      * @return a {@link CompletableFuture} that completes with the deserialised response,
-     *         or completes exceptionally on network error or non-2xx status
+     *         or completes exceptionally on network error or 4xx/5xx status
      */
     private CompletableFuture<?> executeAsync(HttpRequest request, ResolvedMethod resolved) {
         long start = System.currentTimeMillis();
-        return httpClient
-                .sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
+        return sendAsyncWithInterceptors(request)
                 .thenApply(response -> {
                     long elapsed = System.currentTimeMillis() - start;
                     log.debug("<-- {} {} async ({}ms)",
-                            response.statusCode(), request.uri(), elapsed);
+                            response.statusCode(), HeaderSanitizer.sanitize(request.uri()), elapsed);
                     return handleResponse(response, resolved);
+                })
+                .exceptionallyCompose(failure -> {
+                    Throwable cause = failure instanceof CompletionException
+                            && failure.getCause() != null
+                            ? failure.getCause()
+                            : failure;
+                    if (cause instanceof RuntimeException runtime) {
+                        return CompletableFuture.failedFuture(runtime);
+                    }
+                    return CompletableFuture.failedFuture(new RestClientException(
+                            "HTTP call failed: " + cause.getMessage(), cause));
                 });
     }
 
@@ -285,9 +372,9 @@ public final class InvocationDispatcher {
      * <p>The handling logic branches on two main factors:
      * <ul>
      *   <li><b>Envelope mode</b> ({@link ResolvedMethod#wrapInEnvelope()} is {@code true}):
-     *       always wraps the result in {@link HttpResponseEnvelope}; never throws
-     *       {@link ApiException} regardless of status code.</li>
-     *   <li><b>Non-envelope mode</b>: throws {@link ApiException} for 4xx/5xx statuses.
+     *       always wraps the result in {@link HttpResponseEnvelope}; never invokes
+     *       {@link ErrorDecoder} regardless of status code.</li>
+     *   <li><b>Non-envelope mode</b>: invokes {@link ErrorDecoder} for 4xx/5xx statuses.
      *       Returns {@code null} for 204 No Content or {@code void} return types.
      *       Passes through {@link InputStream} directly. Otherwise delegates to the
      *       converter chain.</li>
@@ -297,7 +384,7 @@ public final class InvocationDispatcher {
      * @param resolved resolved method descriptor describing the expected return type
      * @return the deserialised value, an {@link HttpResponseEnvelope}, an
      *         {@link InputStream}, or {@code null}
-     * @throws ApiException        if the status is &ge; 400 (non-envelope mode)
+     * @throws RuntimeException    if the error decoder rejects a 4xx/5xx response
      * @throws RestClientException if the response body cannot be deserialised
      */
     private Object handleResponse(HttpResponse<InputStream> response,
@@ -305,9 +392,19 @@ public final class InvocationDispatcher {
         int status = response.statusCode();
 
         if (resolved.wrapInEnvelope()) {
+            if (status < 200 || status >= 300) {
+                try (InputStream body = response.body()) {
+                    return new HttpResponseEnvelope<>(status, response.headers(), null,
+                            readBoundedUtf8(body));
+                } catch (IOException e) {
+                    throw new RestClientException(
+                            "Failed to read error response: " + e.getMessage(), e);
+                }
+            }
             if (status == 204 ||
                     resolved.responseType().getRawClass() == Void.TYPE ||
                     resolved.responseType().getRawClass() == Void.class) {
+                closeBody(response.body());
                 return new HttpResponseEnvelope<>(status, response.headers(), null);
             }
             if (resolved.responseType().getRawClass() == InputStream.class) {
@@ -324,17 +421,21 @@ public final class InvocationDispatcher {
 
         if (status >= 400) {
             String body;
-            try {
-                body = new String(response.body().readAllBytes());
+            try (InputStream responseBody = response.body()) {
+                body = readBoundedUtf8(responseBody);
             } catch (IOException e) {
                 body = "<unreadable>";
             }
-            throw new ApiException(status, body);
+            RuntimeException decoded = Objects.requireNonNull(
+                    errorDecoder.decode(status, response.headers(), body),
+                    "ErrorDecoder must not return null");
+            throw decoded;
         }
 
         if (status == 204 ||
                 resolved.responseType().getRawClass() == Void.TYPE ||
                 resolved.responseType().getRawClass() == Void.class) {
+            closeBody(response.body());
             return null;
         }
 
@@ -369,6 +470,39 @@ public final class InvocationDispatcher {
         }
         throw new RestClientException(
                 "No converter found for type: " + resolved.responseType());
+    }
+
+    /**
+     * Reads a bounded UTF-8 diagnostic body so error handling cannot retain an
+     * unbounded server response in memory.
+     *
+     * @param body response body stream
+     * @return body text with a truncation suffix when it exceeds the safety limit
+     * @throws IOException if the stream cannot be read
+     */
+    private static String readBoundedUtf8(InputStream body) throws IOException {
+        byte[] bytes = body.readNBytes(MAX_ERROR_BODY_BYTES + 1);
+        boolean truncated = bytes.length > MAX_ERROR_BODY_BYTES;
+        int length = truncated ? MAX_ERROR_BODY_BYTES : bytes.length;
+        String value = new String(bytes, 0, length, StandardCharsets.UTF_8);
+        return truncated ? value + "...[truncated]" : value;
+    }
+
+    /**
+     * Closes a body that is not handed to a caller, converting close failures to
+     * a client exception rather than silently leaking a connection.
+     *
+     * @param body body stream to close; may be {@code null}
+     */
+    private static void closeBody(InputStream body) {
+        if (body == null) {
+            return;
+        }
+        try {
+            body.close();
+        } catch (IOException e) {
+            throw new RestClientException("Failed to close response body", e);
+        }
     }
 
     // ── Accessors ─────────────────────────────────────────────────────────────

@@ -43,12 +43,7 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-core</artifactId>
             <version>1.16.4</version>
-        </dependency>
-        <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-registry-prometheus</artifactId>
-            <version>1.16.4</version>
-            <scope>runtime</scope>
+            <optional>true</optional>
         </dependency>
 
         <!-- Logging API (implementation supplied by consumer) -->

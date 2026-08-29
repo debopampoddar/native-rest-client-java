@@ -56,9 +56,12 @@ public final class FieldHandler implements ParameterHandler {
     public void apply(RequestContext ctx, Object value) {
         if (value == null) return;
         String raw = value.toString();
+        String encodedName = encoded
+                ? name
+                : URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20");
         String encodedValue = encoded
                 ? raw
                 : URLEncoder.encode(raw, StandardCharsets.UTF_8).replace("+", "%20");
-        ctx.addFormField(name, encodedValue);
+        ctx.addFormField(encodedName, encodedValue);
     }
 }

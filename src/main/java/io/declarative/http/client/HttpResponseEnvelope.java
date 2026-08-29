@@ -31,21 +31,27 @@ import java.net.http.HttpHeaders;
  * }
  * }</pre>
  *
- * <p>This is a record; all three components are stored as canonical record components
+ * <p>This is a record; all components are stored as canonical record components
  * and are accessible via the generated accessor methods {@link #status()},
- * {@link #headers()}, and {@link #body()}.
+ * {@link #headers()}, {@link #body()}, and {@link #errorBody()}.
  *
  * @param <T>     the deserialised body type; use {@link Void} for responses with no body
  * @param status  the raw HTTP status code, e.g. {@code 200}, {@code 404}
  * @param headers the full set of response headers returned by the server
  * @param body    the deserialised response body, or {@code null} for 204 / void responses
+ * @param errorBody a bounded raw error response body for non-2xx responses
  *
  * @see InvocationDispatcher
  * @see ResolvedMethod#wrapInEnvelope()
  */
 public record HttpResponseEnvelope<T>(int status,
                                       HttpHeaders headers,
-                                      T body) {
+                                      T body,
+                                      String errorBody) {
+
+    public HttpResponseEnvelope(int status, HttpHeaders headers, T body) {
+        this(status, headers, body, null);
+    }
 
     /**
      * Returns {@code true} if the HTTP status code indicates a successful response,

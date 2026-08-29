@@ -1,12 +1,16 @@
 package io.declarative.http.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.declarative.http.api.converters.JacksonConverter;
 import io.declarative.http.api.converters.ResponseConverter;
 import io.declarative.http.api.converters.StringConverter;
 import io.declarative.http.api.interceptors.ClientInterceptor;
+import io.declarative.http.api.interceptors.AsyncHttpExchangeInterceptor;
 import io.declarative.http.api.interceptors.HttpExchangeInterceptor;
+import io.declarative.http.error.ErrorDecoder;
 
 import java.lang.reflect.Method;
 import java.net.http.HttpClient;
@@ -52,9 +56,9 @@ import java.util.concurrent.Executor;
  *
  * <h2>Thread Safety</h2>
  * <p>Instances of {@code NativeRestClient} are fully thread-safe. The internal
- * {@link ResolvedMethod} metadata is parsed lazily on first use and cached in a
- * {@link ConcurrentHashMap}, so subsequent calls to the same proxy method pay zero
- * reflection overhead.
+ * {@link ResolvedMethod} metadata is parsed when {@link #create(Class)} is called
+ * and cached in a {@link ConcurrentHashMap}, so declaration failures occur before
+ * network I/O and subsequent calls pay zero reflection overhead.
  *
  * <h2>Design Notes</h2>
  * <ul>
@@ -66,18 +70,24 @@ import java.util.concurrent.Executor;
  *       are dispatched non-blockingly via {@link HttpClient#sendAsync}.</li>
  * </ul>
  *
+ * <p>The client implements {@link AutoCloseable}. Closing it closes only an
+ * internally-created {@link HttpClient}; a client supplied through
+ * {@link Builder#httpClient(HttpClient)} remains caller-owned.
+ *
  * @see Builder
  * @see ResolvedMethod
  * @see InvocationDispatcher
  */
-public final class NativeRestClient {
+public final class NativeRestClient implements AutoCloseable {
 
     /** Routes proxy method calls to the underlying {@link HttpClient}. */
     private final InvocationDispatcher dispatcher;
+    private final HttpClient httpClient;
+    private final boolean ownsHttpClient;
 
     /**
      * Cache of pre-parsed {@link ResolvedMethod} descriptors, keyed by the
-     * reflected {@link Method} object. Written once per method on first invocation;
+     * reflected {@link Method} object. Written once when a service proxy is created;
      * safe for concurrent access via {@link ConcurrentHashMap}.
      */
     private final Map<Method, ResolvedMethod> methodCache = new ConcurrentHashMap<>();
@@ -88,8 +98,12 @@ public final class NativeRestClient {
      * @param dispatcher the fully configured dispatcher holding the HTTP client,
      *                   converters, and interceptor chains
      */
-    private NativeRestClient(InvocationDispatcher dispatcher) {
+    private NativeRestClient(InvocationDispatcher dispatcher,
+                             HttpClient httpClient,
+                             boolean ownsHttpClient) {
         this.dispatcher = dispatcher;
+        this.httpClient = httpClient;
+        this.ownsHttpClient = ownsHttpClient;
     }
 
     /**
@@ -116,6 +130,7 @@ public final class NativeRestClient {
     @SuppressWarnings("unchecked")
     public <T> T create(Class<T> service) {
         ResolvedMethod.validateInterface(service);
+        validateAndCacheServiceMethods(service);
 
         return (T) java.lang.reflect.Proxy.newProxyInstance(
                 service.getClassLoader(),
@@ -123,7 +138,16 @@ public final class NativeRestClient {
                 (proxy, method, args) -> {
                     // Short-circuit Object methods (equals, hashCode, toString)
                     if (method.getDeclaringClass() == Object.class) {
-                        return method.invoke(this, args);
+                        return switch (method.getName()) {
+                            case "equals" -> proxy == args[0];
+                            case "hashCode" -> System.identityHashCode(proxy);
+                            case "toString" -> "NativeRestClient proxy for " + service.getName();
+                            default -> throw new AssertionError(method);
+                        };
+                    }
+                    if (method.isDefault()) {
+                        return java.lang.reflect.InvocationHandler.invokeDefault(
+                                proxy, method, args);
                     }
                     ResolvedMethod resolved = methodCache.computeIfAbsent(
                             method,
@@ -132,6 +156,24 @@ public final class NativeRestClient {
                     return dispatcher.dispatch(resolved, args);
                 }
         );
+    }
+
+    /**
+     * Parses every remotely-invoked service method before a proxy is returned so
+     * annotation and return-type failures are reported at client creation rather
+     * than on a production request path.
+     *
+     * @param service validated interface whose methods should be parsed
+     */
+    private void validateAndCacheServiceMethods(Class<?> service) {
+        for (Method method : service.getMethods()) {
+            if (method.getDeclaringClass() == Object.class || method.isDefault()
+                    || java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                continue;
+            }
+            methodCache.computeIfAbsent(method,
+                    candidate -> ResolvedMethod.parse(candidate, dispatcher.objectMapper()));
+        }
     }
 
     // ── Factory ───────────────────────────────────────────────────────────────
@@ -149,6 +191,17 @@ public final class NativeRestClient {
      */
     public static Builder builder(String baseUrl) {
         return new Builder(baseUrl);
+    }
+
+    /**
+     * Closes the internally-created HTTP client. A client supplied through
+     * {@link Builder#httpClient(HttpClient)} remains caller-owned and is not closed.
+     */
+    @Override
+    public void close() {
+        if (ownsHttpClient) {
+            httpClient.close();
+        }
     }
 
     // ── Builder ───────────────────────────────────────────────────────────────
@@ -181,6 +234,9 @@ public final class NativeRestClient {
         /** Optional custom thread pool passed to the underlying {@link HttpClient}. */
         private Executor executor;
         private final List<HttpExchangeInterceptor> exchangeInterceptors = new ArrayList<>();
+        private final List<AsyncHttpExchangeInterceptor> asyncExchangeInterceptors = new ArrayList<>();
+        private Duration requestTimeout = Duration.ofSeconds(30);
+        private ErrorDecoder errorDecoder = ErrorDecoder.apiException();
 
         /**
          * Private constructor — obtain via {@link NativeRestClient#builder(String)}.
@@ -300,8 +356,9 @@ public final class NativeRestClient {
          * concerns like metrics recording, response logging, retry on server errors,
          * and transparent token refresh.
          *
-         * <p>Interceptors are invoked in reverse registration order (outermost first),
-         * forming a classic chain-of-responsibility around the terminal HTTP call.
+         * <p>Interceptors are invoked in registration order. Built-in interceptors
+         * that also implement {@link AsyncHttpExchangeInterceptor} are automatically
+         * installed in the async exchange chain.
          *
          * @param interceptor the exchange interceptor to add; must not be {@code null}
          * @return this builder
@@ -311,7 +368,52 @@ public final class NativeRestClient {
          * @see io.declarative.http.api.interceptors.TokenRefreshExchangeInterceptor
          */
         public Builder addExchangeInterceptor(HttpExchangeInterceptor interceptor) {
-            this.exchangeInterceptors.add(Objects.requireNonNull(interceptor));
+            HttpExchangeInterceptor checked = Objects.requireNonNull(interceptor, "interceptor");
+            this.exchangeInterceptors.add(checked);
+            if (checked instanceof AsyncHttpExchangeInterceptor async) {
+                this.asyncExchangeInterceptors.add(async);
+            }
+            return this;
+        }
+
+        /**
+         * Adds an async-only interceptor. Interceptors implementing both exchange
+         * interfaces normally need only be passed to {@link #addExchangeInterceptor}.
+         */
+        public Builder addAsyncExchangeInterceptor(AsyncHttpExchangeInterceptor interceptor) {
+            AsyncHttpExchangeInterceptor checked =
+                    Objects.requireNonNull(interceptor, "interceptor");
+            if (!this.asyncExchangeInterceptors.contains(checked)) {
+                this.asyncExchangeInterceptors.add(checked);
+            }
+            return this;
+        }
+
+        /**
+         * Sets the timeout applied to each request. The default is 30 seconds.
+         *
+         * @throws IllegalArgumentException if the timeout is zero or negative
+         */
+        public Builder requestTimeout(Duration requestTimeout) {
+            Objects.requireNonNull(requestTimeout, "requestTimeout");
+            if (requestTimeout.isZero() || requestTimeout.isNegative()) {
+                throw new IllegalArgumentException("requestTimeout must be positive");
+            }
+            this.requestTimeout = requestTimeout;
+            return this;
+        }
+
+        /**
+         * Sets the policy used to convert non-envelope 4xx and 5xx responses into
+         * application exceptions. The default creates {@code ApiException} values.
+         * Envelope-returning service methods continue to expose errors as envelopes.
+         *
+         * @param errorDecoder non-null error decoder
+         * @return this builder
+         * @throws NullPointerException if {@code errorDecoder} is {@code null}
+         */
+        public Builder errorDecoder(ErrorDecoder errorDecoder) {
+            this.errorDecoder = Objects.requireNonNull(errorDecoder, "errorDecoder");
             return this;
         }
 
@@ -353,7 +455,10 @@ public final class NativeRestClient {
         public NativeRestClient build() {
             ObjectMapper om = (objectMapper != null)
                     ? objectMapper
-                    : new ObjectMapper().registerModule(new JavaTimeModule());
+                    : new ObjectMapper()
+                    .registerModule(new JavaTimeModule())
+                    .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                    .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
             HttpClient client = (httpClient != null)
                     ? httpClient
@@ -363,9 +468,11 @@ public final class NativeRestClient {
             finalConverters.add(new JacksonConverter(om));
 
             InvocationDispatcher dispatcher = new InvocationDispatcher(
-                    client, baseUrl, om, interceptors, finalConverters, exchangeInterceptors);
+                    client, baseUrl, om, interceptors, finalConverters,
+                    exchangeInterceptors, asyncExchangeInterceptors, requestTimeout,
+                    errorDecoder);
 
-            return new NativeRestClient(dispatcher);
+            return new NativeRestClient(dispatcher, client, httpClient == null);
         }
     }
 }

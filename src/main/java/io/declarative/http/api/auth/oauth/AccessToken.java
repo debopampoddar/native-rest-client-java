@@ -1,5 +1,7 @@
 package io.declarative.http.api.auth.oauth;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 
@@ -15,10 +17,23 @@ public record AccessToken(String value, Instant expiresAt) {
     }
 
     public boolean isExpired() {
-        return Instant.now().isAfter(expiresAt);
+        return isExpired(Clock.systemUTC());
     }
 
-    public boolean expiresWithin(java.time.Duration window) {
-        return Instant.now().isAfter(expiresAt.minus(window));
+    public boolean expiresWithin(Duration window) {
+        return expiresWithin(window, Clock.systemUTC());
+    }
+
+    boolean isExpired(Clock clock) {
+        return !Instant.now(clock).isBefore(expiresAt);
+    }
+
+    boolean expiresWithin(Duration window, Clock clock) {
+        return !Instant.now(clock).isBefore(expiresAt.minus(window));
+    }
+
+    @Override
+    public String toString() {
+        return "AccessToken[value=[REDACTED], expiresAt=" + expiresAt + "]";
     }
 }

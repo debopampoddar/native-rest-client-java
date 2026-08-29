@@ -40,6 +40,7 @@ import java.util.concurrent.CompletableFuture;
  *       access rather than deserialized-body-only delivery.</li>
  *   <li><b>Form URL encoded flag</b> — set when {@link FormUrlEncoded} is present on
  *       the method.</li>
+ *   <li><b>Multipart flag</b> — set when {@link Multipart} is present on the method.</li>
  * </ul>
  *
  * @see NativeRestClient#create(Class)
@@ -74,6 +75,9 @@ public final class ResolvedMethod {
     /** {@code true} when the method is annotated with {@link FormUrlEncoded}. */
     private final boolean formUrlEncoded;
 
+    /** {@code true} when the method is annotated with {@link Multipart}. */
+    private final boolean multipart;
+
     /**
      * {@code true} when the return type (after unwrapping async) is
      * {@link HttpResponseEnvelope}, meaning the full response is surfaced to the caller.
@@ -84,7 +88,8 @@ public final class ResolvedMethod {
     private ResolvedMethod(String httpMethod, String pathTemplate,
                            List<ParameterHandler> handlers, JavaType responseType,
                            boolean isAsync, List<String[]> staticHeaders,
-                           boolean formUrlEncoded, boolean wrapInEnvelope) {
+                           boolean formUrlEncoded, boolean multipart,
+                           boolean wrapInEnvelope) {
         this.httpMethod     = httpMethod;
         this.pathTemplate   = pathTemplate;
         this.handlers       = Collections.unmodifiableList(handlers);
@@ -92,6 +97,7 @@ public final class ResolvedMethod {
         this.isAsync        = isAsync;
         this.staticHeaders  = Collections.unmodifiableList(staticHeaders);
         this.formUrlEncoded = formUrlEncoded;
+        this.multipart      = multipart;
         this.wrapInEnvelope = wrapInEnvelope;
     }
 
@@ -161,6 +167,14 @@ public final class ResolvedMethod {
     public boolean isFormUrlEncoded() { return formUrlEncoded; }
 
     /**
+     * Returns {@code true} if the method carries {@link Multipart}, indicating
+     * that {@code @Part} arguments are serialised as {@code multipart/form-data}.
+     *
+     * @return {@code true} for multipart requests
+     */
+    public boolean isMultipart() { return multipart; }
+
+    /**
      * Returns {@code true} if the method's return type (after async unwrapping) is
      * {@link HttpResponseEnvelope}, meaning the raw HTTP status and headers are exposed
      * to the caller without throwing {@link io.declarative.http.error.ApiException}.
@@ -175,8 +189,9 @@ public final class ResolvedMethod {
      * Parses the given {@link Method} and produces an immutable {@link ResolvedMethod}
      * descriptor ready for repeated use at call time.
      *
-     * <p>This method is called once per method, on the first invocation of the proxy.
-     * The result is cached in {@link NativeRestClient#methodCache}.
+     * <p>This method is called once per method while
+     * {@link NativeRestClient#create(Class)} validates a service proxy. The result
+     * is cached in {@link NativeRestClient}'s method cache.
      *
      * @param method       the reflected service interface method to parse
      * @param objectMapper Jackson mapper whose {@link TypeFactory} is used to construct
@@ -187,9 +202,14 @@ public final class ResolvedMethod {
      *         binding annotation
      */
     public static ResolvedMethod parse(Method method, ObjectMapper objectMapper) {
+        int verbCount = countHttpVerbs(method);
+        if (verbCount != 1) {
+            throw new RestClientException("Method '" + method.getName()
+                    + "' must declare exactly one HTTP verb annotation");
+        }
+
         String httpVerb;
         String path;
-
         if (method.isAnnotationPresent(GET.class)) {
             httpVerb = "GET";
             path = method.getAnnotation(GET.class).value();
@@ -206,12 +226,11 @@ public final class ResolvedMethod {
             httpVerb = "PATCH";
             path = method.getAnnotation(PATCH.class).value();
         } else {
-            throw new RestClientException("Method '" + method.getName()
-                    + "' has no HTTP verb annotation "
-                    + "(expected @GET, @POST, @PUT, @DELETE, or @PATCH)");
+            throw new AssertionError("Unreachable HTTP verb state");
         }
 
         boolean isForm = method.isAnnotationPresent(FormUrlEncoded.class);
+        boolean isMultipart = method.isAnnotationPresent(Multipart.class);
 
         List<String[]> staticHdrs = new ArrayList<>();
         if (method.isAnnotationPresent(Headers.class)) {
@@ -229,9 +248,11 @@ public final class ResolvedMethod {
         }
 
         Annotation[][] paramAnnotations = method.getParameterAnnotations();
+        Class<?>[] parameterTypes = method.getParameterTypes();
+        validateParameters(method, paramAnnotations, parameterTypes, isForm, isMultipart);
         List<ParameterHandler> handlers = new ArrayList<>();
         for (int i = 0; i < paramAnnotations.length; i++) {
-            handlers.add(resolveHandler(method, i, paramAnnotations[i], isForm));
+            handlers.add(resolveHandler(method, i, paramAnnotations[i], parameterTypes[i]));
         }
 
         boolean wrap = false;
@@ -239,12 +260,23 @@ public final class ResolvedMethod {
         boolean async = method.getReturnType() == CompletableFuture.class;
         JavaType responseType;
 
-        Type declared = async
-                ? ((ParameterizedType) method.getGenericReturnType()).getActualTypeArguments()[0]
-                : method.getGenericReturnType();
+        Type declared;
+        if (async) {
+            if (!(method.getGenericReturnType() instanceof ParameterizedType futureType)) {
+                throw new RestClientException("Method '" + method.getName()
+                        + "' must return CompletableFuture<T>");
+            }
+            declared = futureType.getActualTypeArguments()[0];
+        } else {
+            declared = method.getGenericReturnType();
+        }
 
         JavaType declaredType = tf.constructType(declared);
         if (declaredType.getRawClass() == HttpResponseEnvelope.class) {
+            if (!(declared instanceof ParameterizedType)) {
+                throw new RestClientException("Method '" + method.getName()
+                        + "' must return HttpResponseEnvelope<T>");
+            }
             wrap = true;
             responseType = declaredType.containedTypeOrUnknown(0);
         } else {
@@ -252,7 +284,127 @@ public final class ResolvedMethod {
         }
 
         return new ResolvedMethod(httpVerb, path, handlers, responseType,
-                async, staticHdrs, isForm, wrap);
+                async, staticHdrs, isForm, isMultipart, wrap);
+    }
+
+    /**
+     * Counts HTTP verb annotations so a service method cannot ambiguously declare
+     * more than one transport operation.
+     *
+     * @param method service method being parsed
+     * @return number of recognised HTTP verb annotations
+     */
+    private static int countHttpVerbs(Method method) {
+        int count = 0;
+        if (method.isAnnotationPresent(GET.class)) count++;
+        if (method.isAnnotationPresent(POST.class)) count++;
+        if (method.isAnnotationPresent(PUT.class)) count++;
+        if (method.isAnnotationPresent(DELETE.class)) count++;
+        if (method.isAnnotationPresent(PATCH.class)) count++;
+        return count;
+    }
+
+    /**
+     * Validates cross-parameter rules before creating reusable handler objects.
+     *
+     * <p>The checks make declaration failures deterministic at proxy creation:
+     * exactly one binding per ordinary parameter, at most one body or URL,
+     * mutually exclusive form/multipart modes, and a final unannotated
+     * {@link RequestOptions} parameter when present.
+     *
+     * @param method service method being parsed
+     * @param parameterAnnotations annotations for each declared parameter
+     * @param parameterTypes declared Java parameter types
+     * @param formEncoded whether the method carries {@link FormUrlEncoded}
+     * @param multipart whether the method carries {@link Multipart}
+     * @throws RestClientException if the declaration is ambiguous or incompatible
+     */
+    private static void validateParameters(Method method,
+                                           Annotation[][] parameterAnnotations,
+                                           Class<?>[] parameterTypes,
+                                           boolean formEncoded,
+                                           boolean multipart) {
+        int bodyCount = 0;
+        int fieldCount = 0;
+        int partCount = 0;
+        int urlCount = 0;
+        for (int i = 0; i < parameterAnnotations.length; i++) {
+            if (parameterTypes[i] == RequestOptions.class) {
+                if (parameterAnnotations[i].length != 0) {
+                    throw new RestClientException("RequestOptions parameter " + i + " of '"
+                            + method.getName() + "' must not declare a binding annotation");
+                }
+                if (i != parameterAnnotations.length - 1) {
+                    throw new RestClientException("RequestOptions parameter of '" + method.getName()
+                            + "' must be the final parameter");
+                }
+                continue;
+            }
+            int supportedCount = 0;
+            for (Annotation annotation : parameterAnnotations[i]) {
+                if (annotation instanceof Path || annotation instanceof Query
+                        || annotation instanceof QueryMap || annotation instanceof Header
+                        || annotation instanceof HeaderMap || annotation instanceof Body
+                        || annotation instanceof Url || annotation instanceof Field
+                        || annotation instanceof Part) {
+                    supportedCount++;
+                }
+                if (annotation instanceof Body) bodyCount++;
+                if (annotation instanceof Field) fieldCount++;
+                if (annotation instanceof Part part) {
+                    if (part.value().isBlank()) {
+                        throw new RestClientException("@Part value on parameter " + i + " of '"
+                                + method.getName() + "' must not be blank");
+                    }
+                    partCount++;
+                }
+                if (annotation instanceof Url) urlCount++;
+            }
+            if (supportedCount == 0) {
+                throw new RestClientException("Parameter " + i + " of '"
+                        + method.getName() + "' has no recognised annotation");
+            }
+            if (supportedCount > 1) {
+                throw new RestClientException("Parameter " + i + " of '"
+                        + method.getName() + "' must declare exactly one binding annotation");
+            }
+        }
+        if (bodyCount > 1) {
+            throw new RestClientException("Method '" + method.getName()
+                    + "' must not declare multiple @Body parameters");
+        }
+        if (urlCount > 1) {
+            throw new RestClientException("Method '" + method.getName()
+                    + "' must not declare multiple @Url parameters");
+        }
+        if (formEncoded && bodyCount > 0) {
+            throw new RestClientException("Method '" + method.getName()
+                    + "' must not combine @FormUrlEncoded with @Body");
+        }
+        if (formEncoded && fieldCount == 0) {
+            throw new RestClientException("Method '" + method.getName()
+                    + "' uses @FormUrlEncoded but declares no @Field parameters");
+        }
+        if (!formEncoded && fieldCount > 0) {
+            throw new RestClientException("Method '" + method.getName()
+                    + "' declares @Field without @FormUrlEncoded");
+        }
+        if (formEncoded && multipart) {
+            throw new RestClientException("Method '" + method.getName()
+                    + "' must not combine @FormUrlEncoded with @Multipart");
+        }
+        if (multipart && (bodyCount > 0 || fieldCount > 0)) {
+            throw new RestClientException("Method '" + method.getName()
+                    + "' must not combine @Multipart with @Body or @Field");
+        }
+        if (multipart && partCount == 0) {
+            throw new RestClientException("Method '" + method.getName()
+                    + "' uses @Multipart but declares no @Part parameters");
+        }
+        if (!multipart && partCount > 0) {
+            throw new RestClientException("Method '" + method.getName()
+                    + "' declares @Part without @Multipart");
+        }
     }
 
     /**
@@ -261,18 +413,22 @@ public final class ResolvedMethod {
      *
      * <p>Supported annotations (in evaluation order):
      * {@link Path}, {@link Query}, {@link QueryMap}, {@link Header},
-     * {@link HeaderMap}, {@link Body}, {@link Url}, {@link Field}.
+     * {@link HeaderMap}, {@link Body}, {@link Url}, {@link Field}, {@link Part},
+     * or an unannotated final {@link RequestOptions} parameter.
      *
      * @param method      the declaring method (used only for error messages)
      * @param index       zero-based parameter index (used in error messages)
      * @param annotations all annotations present on the parameter
-     * @param isForm      {@code true} if the method carries {@link FormUrlEncoded}
+     * @param parameterType declared Java type of the parameter
      * @return the matching {@link ParameterHandler}
      * @throws RestClientException if no supported annotation is found on the parameter
      */
     private static ParameterHandler resolveHandler(Method method, int index,
                                                    Annotation[] annotations,
-                                                   boolean isForm) {
+                                                   Class<?> parameterType) {
+        if (parameterType == RequestOptions.class) {
+            return new RequestOptionsHandler();
+        }
         for (Annotation ann : annotations) {
             if (ann instanceof Path p)      return new PathHandler(p.value(), p.encoded());
             if (ann instanceof Query q)     return new QueryHandler(q.value(), q.encoded());
@@ -282,10 +438,11 @@ public final class ResolvedMethod {
             if (ann instanceof Body)        return new BodyHandler();
             if (ann instanceof Url)         return new UrlHandler();
             if (ann instanceof Field f)     return new FieldHandler(f.value(), f.encoded());
+            if (ann instanceof Part p)      return new PartHandler(p.value());
         }
         throw new RestClientException("Parameter " + index + " of '" + method.getName()
                 + "' has no recognised annotation. Supported: "
-                + "@Path, @Query, @QueryMap, @Header, @HeaderMap, @Body, @Url, @Field");
+                + "@Path, @Query, @QueryMap, @Header, @HeaderMap, @Body, @Url, @Field, @Part");
     }
 
     /**
@@ -299,7 +456,11 @@ public final class ResolvedMethod {
         if (!service.isInterface()) {
             throw new RestClientException(service.getName() + " is not an interface");
         }
-        if (service.getDeclaredMethods().length == 0) {
+        boolean hasServiceMethod = Arrays.stream(service.getMethods())
+                .anyMatch(method -> method.getDeclaringClass() != Object.class
+                        && !method.isDefault()
+                        && !java.lang.reflect.Modifier.isStatic(method.getModifiers()));
+        if (!hasServiceMethod) {
             throw new RestClientException(
                     service.getName() + " declares no methods — nothing to proxy");
         }

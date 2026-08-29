@@ -3,7 +3,7 @@ package io.declarative.http.example;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.declarative.http.api.auth.oauth.AccessToken;
-import io.declarative.http.api.auth.oauth.OAuthInterceptor;
+import io.declarative.http.api.auth.oauth.OAuth2Decorator;
 import io.declarative.http.api.auth.oauth.RefreshingTokenManager;
 import io.declarative.http.api.auth.oauth.TokenFetcher;
 import io.declarative.http.api.auth.oauth.TokenManager;
@@ -15,8 +15,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 
 public final class OAuthClient {
 
@@ -52,7 +50,7 @@ public final class OAuthClient {
 
                 if (response.statusCode() >= 400) {
                     throw new IllegalStateException(
-                            "Token endpoint error " + response.statusCode() + ": " + response.body());
+                            "Token endpoint error " + response.statusCode());
                 }
 
                 JsonNode json = mapper.readTree(response.body());
@@ -81,16 +79,8 @@ public final class OAuthClient {
                 null
         );
 
-        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-        TokenManager tokens = new RefreshingTokenManager(
-                fetcher::fetchNewToken,   // TokenFetcher
-                Duration.ofSeconds(30),           // refresh before expiry  ← FIX: was mislabelled
-                scheduler                         // ← this is the ScheduledExecutorService
-        );
-
-        return NativeRestClient
-                .builder("https://api.example.com")
-                .addInterceptor(new OAuthInterceptor(tokens::getAccessToken))
+        return OAuth2Decorator.with(tokenManager)
+                .applyTo(NativeRestClient.builder("https://api.example.com"))
                 .build();
     }
 }

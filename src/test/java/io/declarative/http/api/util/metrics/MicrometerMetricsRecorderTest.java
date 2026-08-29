@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 
 import java.net.URI;
 
@@ -12,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MicrometerMetricsRecorderTest {
 
     @Test
+    @DisplayName("Record http call creates timer with tags")
     void recordHttpCall_createsTimerWithTags() {
         MeterRegistry registry = new SimpleMeterRegistry();
         MicrometerMetricsRecorder recorder = new MicrometerMetricsRecorder(registry);
@@ -32,6 +34,7 @@ class MicrometerMetricsRecorderTest {
     }
 
     @Test
+    @DisplayName("Record io error uses io error status and outcome")
     void recordIoError_usesIoErrorStatusAndOutcome() {
         MeterRegistry registry = new SimpleMeterRegistry();
         MicrometerMetricsRecorder recorder = new MicrometerMetricsRecorder(registry);

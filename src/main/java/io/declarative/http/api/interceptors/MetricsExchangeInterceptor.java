@@ -5,8 +5,10 @@ import io.declarative.http.api.util.metrics.MetricsRecorder;
 import java.io.IOException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.concurrent.CompletableFuture;
 
-public final class MetricsExchangeInterceptor implements HttpExchangeInterceptor {
+public final class MetricsExchangeInterceptor
+        implements HttpExchangeInterceptor, AsyncHttpExchangeInterceptor {
 
     private final MetricsRecorder recorder;
 
@@ -33,5 +35,16 @@ public final class MetricsExchangeInterceptor implements HttpExchangeInterceptor
             int status = (response != null ? response.statusCode() : 0);
             recorder.recordHttpCall(request.method(), request.uri(), status, duration, error);
         }
+    }
+
+    @Override
+    public <T> CompletableFuture<HttpResponse<T>> interceptAsync(
+            HttpRequest request, AsyncExchangeChain<T> chain) {
+        long start = System.nanoTime();
+        return chain.proceed(request).whenComplete((response, error) -> {
+            int status = response == null ? 0 : response.statusCode();
+            recorder.recordHttpCall(request.method(), request.uri(), status,
+                    System.nanoTime() - start, error != null);
+        });
     }
 }

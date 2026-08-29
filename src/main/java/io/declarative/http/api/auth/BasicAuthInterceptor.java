@@ -52,7 +52,7 @@ public final class BasicAuthInterceptor implements ClientInterceptor {
                 .encodeToString(userPass.getBytes(StandardCharsets.UTF_8));
 
         HttpRequest authenticated = HttpRequest.newBuilder(request, (k, v) -> true)
-                .header("Authorization", "Basic " + encoded)
+                .setHeader("Authorization", "Basic " + encoded)
                 .build();
 
         return chain.proceed(authenticated);

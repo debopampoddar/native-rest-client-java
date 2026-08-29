@@ -13,12 +13,12 @@ package io.declarative.http.error;
  * try {
  *     User user = userApi.getUser(99L);
  * } catch (ApiException e) {
- *     if (e.getStatus() == 404) {
+ *     if (e.getStatusCode() == 404) {
  *         // handle not-found
- *     } else if (e.getStatus() >= 500) {
+ *     } else if (e.getStatusCode() >= 500) {
  *         // handle server error
  *     }
- *     log.error("API error {}: {}", e.getStatus(), e.getResponseBody());
+ *     log.error("API error {}: {}", e.getStatusCode(), e.getResponseBody());
  * }
  * }</pre>
  *
@@ -57,6 +57,24 @@ public class ApiException extends RuntimeException {
      */
     public int getStatusCode() {
         return status;
+    }
+
+    /**
+     * Returns whether this exception represents a 4xx HTTP response.
+     *
+     * @return {@code true} when the status code is in the range 400 through 499
+     */
+    public boolean isClientError() {
+        return status >= 400 && status < 500;
+    }
+
+    /**
+     * Returns whether this exception represents a 5xx HTTP response.
+     *
+     * @return {@code true} when the status code is in the range 500 through 599
+     */
+    public boolean isServerError() {
+        return status >= 500 && status < 600;
     }
 
     /**
