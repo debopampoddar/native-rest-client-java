@@ -91,8 +91,9 @@ If you are new to the library, read **Quick Start**, then choose the return styl
   `@Multipart` + `@Part` for text and in-memory binary form-data uploads.
 
 - **Auth Helpers**
-  `BasicAuthInterceptor`, `BearerAuthInterceptor`, and full OAuth 2.0 token-refresh
-  infrastructure (`TokenFetcher`, `AccessToken`, `RefreshingTokenManager`, `OAuth2Decorator`).
+  `BasicAuthInterceptor`, `BearerAuthInterceptor`, `ApiKeyAuthInterceptor`, and full
+  OAuth 2.0 token-refresh infrastructure (`TokenFetcher`, `AccessToken`,
+  `RefreshingTokenManager`, `OAuth2Decorator`).
 
 - **Micrometer Metrics**
   `MicrometerMetricsRecorder` + `MetricsExchangeInterceptor` emit dimensional latency
@@ -101,6 +102,32 @@ If you are new to the library, read **Quick Start**, then choose the return styl
 - **Virtual Thread Ready**
   Pass `Executors.newVirtualThreadPerTaskExecutor()` to the builder for effortless
   high-concurrency without platform-thread tuning.
+
+---
+
+## Authentication Coverage
+
+The built-in authentication features focus on service-to-service HTTP clients.
+The table distinguishes convenience support from extension points and intentionally
+out-of-scope protocols.
+
+| Mechanism | Status | Use it this way |
+|---|---|---|
+| HTTP Basic | Built in | `BasicAuthInterceptor` with fixed or supplier-backed credentials. |
+| Bearer token | Built in | `BearerAuthInterceptor` with a token supplier. |
+| Header API key | Built in | `ApiKeyAuthInterceptor`; prefer the redacted `X-Api-Key` header. |
+| OAuth2 client credentials | Built in | `ClientCredentialsTokenFetcher` + `RefreshingTokenManager` + `OAuth2Decorator`. |
+| Other OAuth2 grants | Extension point | Implement `TokenFetcher` for refresh-token, device-code, token-exchange, or JWT-assertion acquisition. |
+| mTLS | Transport configuration | Supply a JDK `HttpClient` configured with the required `SSLContext`. |
+| HMAC or vendor request signing | Extension point | Implement a `ClientInterceptor` that signs the completed `HttpRequest`. |
+| Cookies/session authentication | Transport configuration | Supply a JDK `HttpClient` with a `CookieHandler` when appropriate. |
+| Query-string API keys | No convenience helper | Use a query annotation only when the provider requires it; avoid it where possible because URLs are commonly logged. |
+| Digest, NTLM/Kerberos, DPoP | Not built in | Add a focused integration only when a concrete consumer requires it. |
+
+Authentication decorators are applied in registration order. If more than one
+interceptor writes the same header, the later interceptor’s value wins. Keep
+credentials in your platform secret store and supply them at call time rather
+than hard-coding them in an interface or interceptor.
 
 ---
 
@@ -298,8 +325,8 @@ interceptor so it is applied consistently to every request.
 
 ## Architecture & Execution Flow
 
-For the complete request lifecycle and the reasoning behind the OAuth2 design, see
-[the design and gap analysis](docs/rest-client-gap-analysis.md).
+The request pipeline below is the canonical lifecycle overview. Public extension
+points document their ownership, retry, and OAuth2 behavior in JavaDoc.
 
 ---
 
@@ -392,6 +419,25 @@ NativeRestClient client = NativeRestClient.builder("https://api.example.com")
 
 If the supplier returns `null` or an empty string, the `Authorization` header is
 omitted rather than sending an invalid value.
+
+### API Key
+
+Use `ApiKeyAuthInterceptor` for APIs that expect a key in a request header. The
+supplier form supports key rotation; a missing or blank key leaves the request
+unchanged. A supplied key replaces an existing value for the same header.
+
+```java
+NativeRestClient client = NativeRestClient.builder("https://api.example.com")
+        .addInterceptor(new ApiKeyAuthInterceptor(
+                "X-Api-Key",
+                () -> secretStore.currentApiKey()))
+        .build();
+```
+
+Prefer the standard `X-Api-Key` header over an API key in the query string;
+`X-Api-Key` is redacted by the built-in logging sanitizer. If your provider
+requires a non-standard sensitive header, ensure custom logging never writes its
+raw value.
 
 ### OAuth 2.0 Managed Tokens
 
@@ -760,11 +806,12 @@ NativeRestClient client = NativeRestClient.builder("https://api.example.com")
 
 - **`HeaderSanitizer`** — the built-in `LoggingInterceptor` passes request headers through
   `HeaderSanitizer.sanitize(..)` before logging. By default it redacts `Authorization`,
-  `X-Api-Key`, and `Cookie` headers. Add your own sensitive header names as needed.
+  `X-Api-Key`, and `Cookie` headers. For additional sensitive headers, use a custom
+  logging interceptor that redacts them before writing request or response details.
 
-- **Credentials via `Supplier<String>`** — `BasicAuthInterceptor` and `BearerAuthInterceptor`
-  both accept `Supplier<String>` so credentials are fetched from a secure store at call
-  time, not stored as final strings.
+- **Credentials via `Supplier<String>`** — `BasicAuthInterceptor`,
+  `BearerAuthInterceptor`, and `ApiKeyAuthInterceptor` accept `Supplier<String>` so
+  credentials are fetched from a secure store at call time, not stored as final strings.
 
 - **OAuth secrets** — always load `clientId`, `clientSecret`, and `refreshToken` from
   environment variables or a secrets manager. Never hard-code them.

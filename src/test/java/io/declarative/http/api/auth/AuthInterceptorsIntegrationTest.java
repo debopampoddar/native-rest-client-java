@@ -37,6 +37,7 @@ class AuthInterceptorsIntegrationTest {
         @GET("/bearer") String bearer();
         @GET("/oauth")  String oauth();
         @GET("/custom") String custom();
+        @GET("/api-key") String apiKey();
         @GET("/missing-token") String missingToken();
     }
 
@@ -51,6 +52,7 @@ class AuthInterceptorsIntegrationTest {
         var b = NativeRestClient.builder("http://localhost:" + wm.port());
         if (interceptor instanceof BasicAuthInterceptor i) b.addInterceptor(i);
         if (interceptor instanceof BearerAuthInterceptor i) b.addInterceptor(i);
+        if (interceptor instanceof ApiKeyAuthInterceptor i) b.addInterceptor(i);
         if (interceptor instanceof OAuthInterceptor i) b.addInterceptor(i);
         return b.build();
     }
@@ -126,6 +128,53 @@ class AuthInterceptorsIntegrationTest {
         assertThat(c.create(AuthApi.class).missingToken()).isEqualTo("no-auth");
     }
 
+    // ── ApiKeyAuth ───────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Adds the configured API key header")
+    void apiKeyAuth_addsConfiguredHeader() {
+        wm.stubFor(get("/api-key")
+                .withHeader("X-Api-Key", equalTo("api-key-123"))
+                .willReturn(ok("ok-api-key")));
+
+        assertThat(clientWith(new ApiKeyAuthInterceptor("X-Api-Key", "api-key-123"))
+                .create(AuthApi.class).apiKey())
+                .isEqualTo("ok-api-key");
+    }
+
+    @Test
+    @DisplayName("Uses the latest API key supplied for each request")
+    void apiKeyAuth_usesLatestSupplierValue() {
+        AtomicReference<String> key = new AtomicReference<>("first-key");
+        NativeRestClient client = clientWith(new ApiKeyAuthInterceptor("X-Api-Key", key::get));
+        AuthApi api = client.create(AuthApi.class);
+        wm.stubFor(get("/api-key").withHeader("X-Api-Key", equalTo("first-key"))
+                .willReturn(ok("first")));
+        assertThat(api.apiKey()).isEqualTo("first");
+
+        key.set("rotated-key");
+        wm.resetAll();
+        wm.stubFor(get("/api-key").withHeader("X-Api-Key", equalTo("rotated-key"))
+                .willReturn(ok("second")));
+        assertThat(api.apiKey()).isEqualTo("second");
+    }
+
+    @Test
+    @DisplayName("Replaces an existing API key header and skips a blank key")
+    void apiKeyAuth_replacesExistingHeaderAndSkipsBlankKey() throws IOException {
+        HttpRequest replaced = applyToRequest(
+                new ApiKeyAuthInterceptor("X-Api-Key", "fresh-key"),
+                "x-api-key", "stale-key");
+        assertThat(replaced.headers().allValues("X-Api-Key"))
+                .containsExactly("fresh-key");
+
+        HttpRequest unchanged = applyToRequest(
+                new ApiKeyAuthInterceptor("X-Api-Key", () -> " "),
+                "X-Api-Key", "original-key");
+        assertThat(unchanged.headers().allValues("X-Api-Key"))
+                .containsExactly("original-key");
+    }
+
     // ── OAuthInterceptor ──────────────────────────────────────────────────────
 
     @Test
@@ -193,10 +242,33 @@ class AuthInterceptorsIntegrationTest {
                 .containsExactly("Bearer fresh");
     }
 
+    /**
+     * Applies one interceptor to a request containing a stale Authorization header.
+     *
+     * @param interceptor interceptor to test
+     * @return interceptor-processed request
+     * @throws IOException if the interceptor chain fails
+     */
     private static HttpRequest applyToRequest(ClientInterceptor interceptor)
             throws IOException {
+        return applyToRequest(interceptor, "authorization", "Bearer stale");
+    }
+
+    /**
+     * Applies one interceptor to a request containing a pre-existing header.
+     *
+     * @param interceptor interceptor to test
+     * @param headerName existing header name
+     * @param headerValue existing header value
+     * @return interceptor-processed request
+     * @throws IOException if the interceptor chain fails
+     */
+    private static HttpRequest applyToRequest(ClientInterceptor interceptor,
+                                              String headerName,
+                                              String headerValue)
+            throws IOException {
         HttpRequest original = HttpRequest.newBuilder(URI.create("https://example.test"))
-                .header("authorization", "Bearer stale")
+                .header(headerName, headerValue)
                 .build();
         return new InterceptorChain(List.of(interceptor)).proceed(original);
     }
